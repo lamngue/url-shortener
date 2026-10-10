@@ -6,19 +6,6 @@ Keep each entry short: a few lines is enough.
 ## Template
 ---
 
-## Example (delete before sharing)
-
-### D-01: Kafka message key is the order ID
-- **Date:** 2026-10-09
-- **Context:** Events for one order must be processed in order, while load should spread across partitions.
-- **Options considered:** single partition, random key, order ID as key
-- **Decision:** Use the order ID as the key.
-- **Why:** The same key always goes to the same partition, so each order stays ordered while different orders run in parallel.
-- **Trade-off:** One very busy order could make a hot partition. No global ordering across orders.
-- **Revisit if:** Partition count changes (keys may map to different partitions).
-
----
-
 ## Decisions
 
 ### D-01: Short codes come from a counter, encoded in Base 62
@@ -29,6 +16,7 @@ Keep each entry short: a few lines is enough.
 - **Why:**  A counter never produce same number twice (kept incrementing), so no collision check and no retry on insert. 7 characters can give about 3.5 trillion codes. 
     * At about 12 creates per second, a plain Postgres sequence would also work fine.
     * Blocks are a cheap optimization. They also fit the two-data-center story, because each data center gets its own range and never needs to coordinate.
+    * Keeps `code` stored in DB. Because if the shuffle is modified, the decoder will decode into the wrong row.
 - **Trade-off:** The counter is a point of coordination. Each app server takes a block of IDs to avoid querying database every time. The time shuffle hides the order only, not the security.
 - **Revisit if:** Several regions write at once (give each region unique ID range), or the write rate outgrow one counter.
 
@@ -69,6 +57,32 @@ Keep each entry short: a few lines is enough.
 - **Trade-off:** If the provider is down, new logins fail, though existing tokens work until they expire. A token cannot be revoked before it expires, so I keep the lifetime short.
 - **Revisit if:** Immediate revocation is needed (add introspection), or the provider's cost or lock-in becomes a problem.
 
+### D-06: Spring Boot 4.1.x
+- **Date:** 2026-10-11
+- **Context:** The skeleton needs a Spring Boot version, and this is a new service.
+- **Options considered:** Boot 3.5.x, Boot 4.1.x
+- **Decision:** Use Boot 4.1.x.
+- **Why:** Boot 3.5 reached end of life on June 30, 2026, so a new service should start on a supported line.
+- **Trade-off:** Renamed starters, fewer tutorials and Stack Overflow answers, and Jackson 3, all of which I need to learn.
+- **Revisit if:** Boot 4 differences cost more than a few hours before the deadline. Then I fall back to 3.5 and say in the presentation that it is out of support.
+
+### D-07: Database schema through Flyway migrations
+- **Date:** 2026-10-11
+- **Context:** Link mappings must never be lost, so the schema should be explicit and reproducible.
+- **Options considered:** Hibernate generating tables (`ddl-auto`), a plain SQL script run by Compose, Flyway migrations
+- **Decision:** Use Flyway (`V1__create_links.sql`) and set Hibernate to `validate`.
+- **Why:** Versioned SQL files make the schema visible, including the unique constraint on `code`, and they run the same way in every environment. With `validate`, the app fails at startup if the entities and tables differ.
+- **Trade-off:** Two extra dependencies (the Flyway starter and the Postgres module). A migration that has already run must never be edited, so every change is a new file. More typing than auto-generation.
+- **Revisit if:** The schema changes so often that migration files slow me down, or I need rollback tooling. In that case I would keep auto-generation for local experiments only.
+
+### D-08: ID blocks from a Postgres sequence
+- **Date:** 2026-10-11
+- **Context:** Every new link needs a unique counter number (D-01). Asking the database for every number adds a round trip per create, and each data center needs its own range.
+- **Options considered:** One `nextval` per link, a counter table with row locking, a sequence with `INCREMENT BY 1000`
+- **Decision:** A sequence with `INCREMENT BY 1000`, `NO CYCLE` and a `MAXVALUE` below 62^7. Each app instance takes one value as the start of a block and hands out that number plus the next 999 from memory. Each data center has its own sequence with a non-overlapping `MINVALUE` and `MAXVALUE`.
+- **Why:** A sequence never gives the same number to two callers, so blocks never overlap. One database call serves 1,000 links. Numbers left in a block when an instance restarts are lost, which is harmless with about 3.5 trillion codes.
+- **Trade-off:** Gaps in the numbers, and numbers that are not in order across instances. Creates still need Postgres to store the link, so this reduces load rather than removing the dependency.
+- **Revisit if:** The write rate outgrows one sequence (make blocks bigger first), more regions need their own ranges, or the numbers get close to `MAXVALUE`.
 ---
 
 ## Questions for the team (ask before building if unclear)

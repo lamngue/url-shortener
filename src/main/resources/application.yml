@@ -1,0 +1,18 @@
+spring:
+  application:
+    name: url-shortener
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:shortener}
+    username: ${DB_USER:shortener}
+    password: ${DB_PASSWORD:shortener}
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}

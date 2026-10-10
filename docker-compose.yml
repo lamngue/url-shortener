@@ -1,0 +1,30 @@
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: shortener
+      POSTGRES_USER: shortener
+      POSTGRES_PASSWORD: shortener # local development only
+    ports:
+      - "5432:5432"
+    volumes:
+      # Postgres 18+ images declare the volume at /var/lib/postgresql (PGDATA is a subfolder)
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shortener -d shortener"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:8
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres-data:
