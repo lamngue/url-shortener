@@ -9,11 +9,16 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Optional;
+
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -26,6 +31,9 @@ class LinkControllerTest {
 
     @MockitoBean
     private LinkService linkService;
+
+    @MockitoBean
+    private LinkStatsService linkStatsService;
 
     @Test
     void validUrlReturns201WithCodeAndShortUrl() throws Exception {
@@ -84,6 +92,30 @@ class LinkControllerTest {
         when(linkService.deactivate("zzzzzzz")).thenReturn(false);
 
         mvc.perform(delete("/api/links/zzzzzzz"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.detail").value("Code not found"));
+    }
+
+    @Test
+    void statsReturnsTotalAndDays() throws Exception {
+        when(linkStatsService.stats("02tdk01")).thenReturn(Optional.of(new LinkStatsResponse("02tdk01", 5, List.of(
+                new LinkStatsResponse.DailyClicks(LocalDate.parse("2026-10-11"), 3),
+                new LinkStatsResponse.DailyClicks(LocalDate.parse("2026-10-12"), 2)))));
+
+        mvc.perform(get("/api/links/02tdk01/stats"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("02tdk01"))
+                .andExpect(jsonPath("$.totalClicks").value(5))
+                .andExpect(jsonPath("$.days[0].day").value("2026-10-11"))
+                .andExpect(jsonPath("$.days[0].clicks").value(3))
+                .andExpect(jsonPath("$.days[1].day").value("2026-10-12"));
+    }
+
+    @Test
+    void statsForUnknownOrDeactivatedCodeReturns404() throws Exception {
+        when(linkStatsService.stats("zzzzzzz")).thenReturn(Optional.empty());
+
+        mvc.perform(get("/api/links/zzzzzzz/stats"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.detail").value("Code not found"));
     }
