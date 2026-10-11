@@ -24,6 +24,16 @@ spring:
     problemdetails:
       enabled: true
 
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      # acks=all: Kafka confirms only when every in-sync copy has the event (also Kafka's default).
+      acks: all
+      properties:
+        # The redirect must not wait for Kafka: give up after 100 ms and drop the click (D-04).
+        # Kafka's default would block the request thread for up to 60 seconds.
+        max.block.ms: 100
+
 shortener:
   base-url: ${APP_BASE_URL:http://localhost:8080}
   # Required: the secret multiplier for the short code shuffle. No default on purpose.
