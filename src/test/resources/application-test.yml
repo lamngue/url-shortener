@@ -10,3 +10,6 @@ spring:
     admin:
       # Integration tests have no Kafka container: do not try to create the topic at startup.
       auto-create: false
+    listener:
+      # No Kafka in integration tests: the consumer is not started. Tests call it directly.
+      auto-startup: false
