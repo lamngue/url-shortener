@@ -19,49 +19,50 @@ Client -> Load balancer -> Spring Boot app (stateless, many instances)
                               '-> Kafka (click events, async) -> stats consumer -> Postgres
 ```
 
-- Redirect path: check Redis, on a miss read Postgres and fill Redis, answer with a 302, publish a click event without waiting.
-- Create path: validate the JWT, take the next ID from the Postgres sequence, scramble it, encode it in base 62, save the row, return the short URL.
+- Redirect path: check the code format, check Redis, on a miss read Postgres and fill Redis (the URL, or a short-lived `NOT_FOUND` marker), answer with a 302 or 404, publish a click event without waiting.
+- Create path: validate the JWT (design only), take the next ID from the Postgres sequence, scramble it, encode it in base 62, save the row, delete the Redis key for that code, return the short URL.
 - Availability: two data centers, each with the same setup, behind one load balancer. Each data center has its own ID range, so codes never collide.
 
 Key decisions are explained in [decisions.md](decisions.md).
 
 ## What is implemented and what is design only
 
-Fill this in honestly before sending.
-
 | Area | Status |
 |------|--------|
-| Create and redirect (Postgres, Redis) | TODO |
-| List and deactivate links, cache eviction | TODO |
-| Click statistics through Kafka | TODO |
-| JWT validation | TODO |
+| Create and redirect (Postgres, Redis cache-aside, Redis fallback) | Implemented, run end to end with Docker Compose |
+| List and deactivate links | Design only (the cache key is already deleted after a create) |
+| Click statistics through Kafka | In progress, planned before hand-in (design in D-04) |
+| JWT validation, ownership checks | Design only (D-05); links are owned by a placeholder `anonymous` |
 | Two data centers, replicas, load balancer | Design only |
 
 ## Tech stack
 
 - Language and version: Java 21
-- Framework: Spring Boot (Web, Data JPA, Data Redis, Security OAuth2 resource server, Kafka, Actuator)
+- Framework: Spring Boot 4.1 (Web MVC, Validation, Data JPA with Flyway, Data Redis, Actuator). Planned: Spring Kafka. Design only: Spring Security OAuth2 resource server
 - Database: PostgreSQL
 - Cache: Redis
 - Messaging: Kafka
-- Build tool: Maven (TODO: confirm)
+- Build tool: Maven (wrapper included, `./mvnw`)
 - Containers: Docker, Docker Compose
 
 ## How to run
 
-Prerequisites: Docker and Docker Compose (nothing else should be needed).
+Prerequisites: Docker with Docker Compose, and Java 21 (Maven comes with the wrapper). Compose starts Postgres and Redis; the app runs on your machine.
 
 ```bash
 # 1. Clone
 git clone <repo-url>
 cd <repo-folder>
 
-# 2. Start everything
-docker compose up --build
+# 2. Start Postgres and Redis
+docker compose up -d
 
-# 3. Try it (TODO: confirm paths and auth once implemented)
+# 3. Start the app. SHORT_CODE_K is the secret multiplier for the code shuffle
+#    (odd, not a multiple of 31, below 62^7). The app refuses to start without it.
+SHORT_CODE_K=<your-secret-k> ./mvnw spring-boot:run
+
+# 4. Try it (no token needed yet: authentication is design only)
 curl -X POST http://localhost:8080/api/links \
-  -H "Authorization: Bearer <access-token>" \
   -H "Content-Type: application/json" \
   -d '{ "url": "https://example.com/some/long/path" }'
 
@@ -80,21 +81,21 @@ Stop with `docker compose down` (add `-v` to remove data).
 | DELETE | /api/links/{code} | Deactivate my link (soft delete) | 204 | 401, 403 not the owner, 404 |
 | GET | /api/links/{code}/stats | Click statistics for my link | 200 | 401, 403, 404 |
 
-Authentication: Bearer access token (JWT) from an OIDC provider. The `/{code}` redirect needs no token.
+Authentication (design only, D-05): Bearer access token (JWT) from an OIDC provider. The `/{code}` redirect needs no token. Today `POST /api/links` and `GET /{code}` are implemented without authentication; the other endpoints are design only.
 
 ## Data model
 
-- `links`: id (from the counter), code (unique index), long_url, owner_sub (the token's `sub`), active, created_at.
-- `click_stats`: link_id, day, count. One row per link per day.
-- `processed_events`: event_id (primary key). Used to ignore duplicate click events.
+- `links` (implemented, `V1__create_links.sql`): id (from the counter), code (unique index), long_url, owner_sub (the token's `sub`; `anonymous` until authentication exists), active, created_at.
+- `click_stats`: link_id, day, count. One row per link per day; the day comes from the event's `clickedAt`.
+- `processed_events`: event_id (primary key), processed_at. Used to ignore duplicate click events; rows older than 1 day are deleted.
 
 ## Reliability
 
 - Delivery guarantee: at-least-once from Kafka, with an idempotent consumer.
-- Duplicate handling: each click event has a unique event ID. The consumer inserts it (unique constraint) and updates the counter in one transaction, so a redelivered event is ignored.
+- Duplicate handling: each click event has a unique event ID. The consumer inserts it (unique constraint) and updates the counter in one transaction, so a redelivered event is ignored. Event IDs are kept for 1 day.
 - Retries and dead letter handling: events that keep failing go to a dead letter topic so they do not block the stream.
-- If Redis is down: reads fall back to Postgres, slower under load.
-- If Kafka is down: redirects still work, and some clicks may not be counted.
+- If Redis is down: reads fall back to Postgres, slower under load. Redis calls time out after 100 ms, and Redis is not part of the health check, so a cache outage does not remove instances from the load balancer.
+- If Kafka is down: redirects still work. The producer waits at most about 100 ms, then drops the click, so some clicks are not counted.
 - If the identity provider is down: new sign-ins fail, existing tokens work until they expire. Redirects are unaffected.
 - Link mappings: stored in Postgres with a replica and backups. Redis is only a performance layer.
 - Deactivation: update Postgres first, then delete the Redis entry, so a stale entry is not put back.
@@ -113,7 +114,15 @@ Authentication: Bearer access token (JWT) from an OIDC provider. The `/{code}` r
 ./mvnw test
 ```
 
-Planned: unit tests for the code generator (base 62, shuffle, no collisions) and integration tests with Testcontainers for Postgres, Redis and Kafka (TODO: update with what exists). CI runs build and tests on every push.
+Docker must be running: `contextLoads` starts Postgres and Redis containers with Testcontainers.
+
+What exists:
+- Unit tests for the code generator (base 62, shuffle, boundaries, uniqueness, K validation, code format).
+- Unit and web-layer tests for the cache, redirect, create and configuration (mocked Postgres and Redis).
+- `contextLoads` against real Postgres and Redis containers: proves Flyway and Hibernate `validate` agree.
+- A manual end-to-end run with Docker Compose, including Redis stopped and Redis hanging.
+
+Not covered yet: automated end-to-end flow tests, Kafka. A CI pipeline (build and tests on every push) is a next step.
 
 ## Known limitations and next steps
 

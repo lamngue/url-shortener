@@ -27,27 +27,48 @@ Keep each entry short: a few lines is enough.
 - **Trade-off:** Every click hits our server (about 11,600 per second on average), so redirects must be fast. The Redis cache (D-03) answers from memory instead of Postgres.
 - **Revisit if:** Statistics and deactivation are no longer needed and the load is a problem. Then use a 301, or a 302 with a short Cache-Control max-age.
 
-### D-03: Redis cache-aside, with eviction on deactivation (update the DB, then delete the cache entry)
-- **Date:** 2026-10-09
-- **Context:** Read:write ratio is 1000 to 1 (outnumber), and a deactivated link must stop redirecting.
-- **Options considered:** no cache, write-through, cache-aside
-- **Decision:** Redis cached-aside, on read: Check Redis, if miss Read from Postgres then fill Redis with a TTL. Implement eviction on deactivated links. Update database first then delete the cache entry.
-- **Why:** Redis absorbs the reads and Postgres stays the source of truth. Write-through gonna fill links with nobody clicks. Deleting after a database update stops a concurrent read from putting the old value back to the cache.
-- **Trade-off:** Serving stale data (redirected link) from Redis, a short window is possible. Redis might be unvailable, significantly slower read, reads hit Postgres and could overload.
-- **Revisit if:** One hot key overloads Redis (add an in-memory copy per app server), or the hit ratio drops.
+### D-03: Redis cache in front of Postgres (cache-aside)
+- **Date:** 2026-10-09 (updated 2026-10-11)
+- **Context:** There are about 1,000 redirects for every link created, and a deactivated link must stop redirecting.
+- **Options considered:** (1) No cache. (2) Write-through: put every new link into Redis when it is created. (3) Cache-aside: put a link into Redis the first time someone opens it.
+- **Decision:** Option 3.
+    * **Redirect:** check the code format first. Then look in Redis. If Redis does not have it, read Postgres and save the answer in Redis.
+    * **What Redis stores:** the key `link:{code}` holds the long URL. A code that does not exist or is deactivated is stored as `NOT_FOUND`, so repeated requests for it do not hit Postgres. Both unknown and deactivated codes return 404.
+    * **How long entries live:** URLs for 5 minutes plus a random extra of up to 10%. `NOT_FOUND` for 10 seconds.
+    * **Create:** after saving a new link, delete its Redis key, in case an earlier request left a `NOT_FOUND` there.
+    * **Deactivate (design only):** update Postgres first, then delete the Redis key.
+    * **If Redis fails:** every Redis call gives up after 100 ms. A failed read counts as "not in Redis" and the app asks Postgres. A failed write is ignored. Redis is not part of the health check, so a Redis outage does not take the app out of the load balancer.
+- **Why:**
+    * Redis answers from memory, so most redirects never reach Postgres. Postgres stays the source of truth.
+    * Write-through would fill Redis with links nobody opens. Cache-aside only stores links people actually use.
+    * A popular link costs about one Postgres read every 5 minutes. The random extra stops many entries from expiring at the same moment.
+    * `NOT_FOUND` lives only 10 seconds, because a code that does not exist yet will exist once the counter reaches it.
+    * Updating Postgres before deleting the Redis key makes it unlikely that an old value is put back. The time limit on entries limits the damage if it happens anyway.
+    * `NOT_FOUND` can never be mistaken for a real link, because create only accepts http and https URLs.
+- **Trade-off:** After a deactivation, the old URL can keep working for up to about 5 minutes, if the Redis delete is lost (a request in progress puts the old value back, or Redis is down at that moment). While Redis is down, every redirect goes to Postgres, which is slower and could overload it under heavy traffic.
+- **Measured:** With Redis stopped, redirects and creates work at normal speed. With Redis hanging, a redirect takes about 210 ms, because the read and the save each wait 100 ms before giving up.
+- **Revisit if:** One very popular link overloads Redis (keep a small copy in each app server), many requests miss the same expired popular link at once (let only one of them reload it), fewer requests are answered from Redis, or the 210 ms during a Redis hang becomes a problem.
 
 ### D-04: Click events go to Kafka, and a consumer counts them
-- **Date:** 2026-10-10
+- **Date:** 2026-10-10 (updated 2026-10-11)
 - **Context:** Count clicks per link without slowing down redirects.
-- **Options considered:** Update a counter in Postgres on every redirect, or publish events and count them later.
-- **Decision:** The app publishes a click event to Kafka without waiting, keyed by link ID, with a unique eventId. A consumer group counts them. In one transaction the consumer inserts the eventId (unique constraint) and increments the daily counter, so a redelivered event is ignored.
-- **Why:** Redirects stay fast, and a statistics outage does not break them. A counter updated on every redirect would be a hot row for popular links. Keying by link ID sends all clicks for one link to one consumer.
-- **Trade-off:** Statistics lag by a few seconds. Delivery is at-least-once (the eventId prevents double counting), and a click can be lost if Kafka is unreachable, so counts are approximate.
-- **Failure handling:** If a consumer dies, Kafka gives its partitions to another consumer, which resumes from the last committed offset. Some events are redelivered and ignored.
-- **Revisit if:** Exact real-time counts are required (use the outbox pattern so no click is lost).
+- **Options considered:** (1) Add 1 to a counter in Postgres on every redirect. (2) Count in memory and save the totals every few seconds. (3) Send each click to Kafka and count it later.
+- **Decision:** Option 3.
+    * **What a click event holds:** a unique `eventId`, the short `code`, and `clickedAt` (when the redirect happened). The code is the Kafka key.
+    * **Sending:** the redirect sends the event and does not wait for an answer. If Kafka does not take it within about 100 ms, the click is dropped.
+    * **Counting:** a consumer reads the events. For each one it saves the `eventId` and adds 1 to the link's count for that day, both in one transaction. If the same event arrives twice, the `eventId` is already saved, so it is not counted again.
+    * **Cleanup:** saved event IDs are deleted after 1 day.
+- **Why:**
+    * Option 1 is slow for popular links: every click writes to the same row.
+    * Option 2 loses counts when an app instance crashes, and it can only hold counts for a short time if Postgres is down. Kafka stores events safely on disk, so nothing is lost and the consumer catches up later.
+    * The code is known on every redirect (even when the URL comes from Redis), so it works as the key, and all clicks for one link stay in order on one partition.
+    * `clickedAt` puts each click on the day it happened, even if the consumer reads it late.
+    * Repeated events arrive within minutes, so keeping event IDs for 1 day is enough.
+- **Trade-off:** Statistics are a few seconds behind. Clicks are lost while Kafka is unreachable. Counts are approximate.
+- **Failure handling:** If a consumer dies, another one takes over from the last saved position. Some events are read again and skipped.
+- **Revisit if:** Exact counts are required (then write each click to a Postgres table first and publish it to Kafka from there, the "outbox pattern"), or deleting old event IDs becomes slow (then split the table by day and drop whole days).
 
-
-### D-05: JWT resource server, login through an OIDC provider
+### D-05: JWT resource server, login through an OIDC provider (LEFT OUT)
 - **Date:** 2026-10-10
 - **Context:** Users must be authenticated, and each user may only manage their own links.
 - **Options considered:** Own user table and passwords, or JWTs from an OIDC provider.
@@ -97,6 +118,7 @@ Keep each entry short: a few lines is enough.
 
 ## Things I left out on purpose (scope)
 - Custom aliases, expiry
+- Built: create, and redirect with the Redis cache. Being built before hand-in: click statistics through Kafka (it stays design only if it is not working and explainable by the stop date). Design only: OIDC sign-in and JWT validation (D-05), listing and deactivating links, the load balancer and the second data center. Reason: limited time, and the brief asks for the thinking process rather than a complete solution.
 
 ## Known limitations and next steps
 -
