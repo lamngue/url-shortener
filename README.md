@@ -30,8 +30,9 @@ Key decisions are explained in [decisions.md](decisions.md).
 | Area | Status |
 |------|--------|
 | Create and redirect (Postgres, Redis cache-aside, Redis fallback) | Implemented, run end to end with Docker Compose |
-| List and deactivate links | Design only (the cache key is already deleted after a create) |
-| Click statistics through Kafka (D-04) | Implemented: each successful redirect sends a click event, and a consumer counts clicks per code per day in Postgres. The stats endpoint is design only; counts can be read in Postgres |
+| Deactivate links | Implemented: `DELETE /api/links/{code}`, Postgres first, then the Redis key |
+| List my links | Design only |
+| Click statistics through Kafka (D-04) | Implemented: each successful redirect sends a click event, and a consumer counts clicks per code per day in Postgres. `GET /api/links/{code}/stats` shows the total and the clicks per day |
 | JWT validation, ownership checks | Design only (D-05); links are owned by a placeholder `anonymous` |
 | Two data centers, replicas, load balancer | Design only |
 
@@ -68,9 +69,11 @@ curl -X POST http://localhost:8080/api/links \
 
 curl -i http://localhost:8080/<code>
 
-# 5. See the click counts (the consumer adds them a moment after each redirect)
-docker compose exec postgres psql -U shortener -d shortener \
-  -c "SELECT code, day, num_clicks FROM click_stats"
+# 5. See the click statistics (the consumer adds clicks a moment after each redirect)
+curl http://localhost:8080/api/links/<code>/stats
+
+# 6. Deactivate the link: the next redirect returns 404
+curl -i -X DELETE http://localhost:8080/api/links/<code>
 ```
 
 Stop with `docker compose down` (add `-v` to remove data).
@@ -81,11 +84,11 @@ Stop with `docker compose down` (add `-v` to remove data).
 |--------|------|-------------|---------|--------|
 | POST | /api/links | Create a short link for a long URL | 201 with code and short URL | 400 invalid URL, 401 |
 | GET | /{code} | Redirect to the long URL (public) | 302 with Location | 404 unknown or deactivated |
-| GET | /api/links | List my links (cursor pagination) | 200 | 401 |
-| DELETE | /api/links/{code} | Deactivate my link (soft delete) | 204 | 401, 403 not the owner, 404 |
-| GET | /api/links/{code}/stats | Click statistics for my link (design only; counts are already in `click_stats`) | 200 | 401, 403, 404 |
+| GET | /api/links | List my links (cursor pagination, design only) | 200 | 401 |
+| DELETE | /api/links/{code} | Deactivate my link (soft delete). 204 also if it was already inactive | 204 | 401, 403 not the owner, 404 "Code not found" |
+| GET | /api/links/{code}/stats | Click statistics for my link: total and clicks per day | 200 | 401, 403, 404 "Code not found" (also for a deactivated link) |
 
-Authentication (design only, D-05): Bearer access token (JWT) from an OIDC provider. The `/{code}` redirect needs no token. Today `POST /api/links` and `GET /{code}` are implemented without authentication; the other endpoints are design only.
+Authentication (design only, D-05): Bearer access token (JWT) from an OIDC provider. The `/{code}` redirect needs no token. Today create, redirect, deactivate and stats are implemented without authentication, so 401 and 403 are never returned yet, and anyone who knows a code can deactivate it or see its statistics. Listing is design only.
 
 ## Data model
 
@@ -103,7 +106,7 @@ Authentication (design only, D-05): Bearer access token (JWT) from an OIDC provi
 - If Postgres is down for the consumer: clicks wait in Kafka and are counted when Postgres is back (measured: 4 clicks during a short outage were all counted afterwards).
 - If the identity provider is down: new sign-ins fail, existing tokens work until they expire. Redirects are unaffected.
 - Link mappings: stored in Postgres with a replica and backups. Redis is only a performance layer.
-- Deactivation (design only): update Postgres first, then delete the Redis entry. This makes it unlikely that an old value is put back; if it happens, the cache time limit ends it within about 5 minutes.
+- Deactivation: update Postgres first, then delete the Redis entry (measured: the next redirect returns 404 at once). This makes it unlikely that an old value is put back; if it happens, the cache time limit ends it within about 5 minutes.
 
 ## Security
 
@@ -123,9 +126,9 @@ Docker must be running: the integration tests start Postgres and Redis container
 
 What exists:
 - Unit tests for the code generator (base 62, shuffle, boundaries, uniqueness, K validation, code format).
-- Unit and web-layer tests for the cache, redirect, create and configuration (mocked Postgres and Redis).
+- Unit and web-layer tests for the cache, redirect, create, deactivate, stats and configuration (mocked Postgres and Redis).
 - `contextLoads` against real Postgres and Redis containers: proves Flyway and Hibernate `validate` agree.
-- Click statistics: the Kafka sender with a mocked Kafka (right key, never fails a redirect); the counting and the cleanup against a real Postgres (same-day totals, redelivered events counted once, UTC day boundaries, old event IDs deleted).
+- Click statistics: the Kafka sender with a mocked Kafka (right key, never fails a redirect); the counting and the cleanup against a real Postgres (same-day totals, redelivered events counted once, UTC day boundaries, old event IDs deleted), and the stats query against a real Postgres (total, days in order, deactivated links hidden).
 - Manual end-to-end runs with Docker Compose: Redis stopped and Redis hanging; Kafka stopped; Postgres stopped while clicks were being counted.
 
 Not covered yet: automated end-to-end tests with a real Kafka, and a Postgres outage longer than the 30-second connection wait (where the consumer's retry takes over). A CI pipeline (build and tests on every push) is a next step.

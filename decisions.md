@@ -36,7 +36,7 @@ Keep each entry short: a few lines is enough.
     * **What Redis stores:** the key `link:{code}` holds the long URL. A code that does not exist or is deactivated is stored as `NOT_FOUND`, so repeated requests for it do not hit Postgres. Both unknown and deactivated codes return 404.
     * **How long entries live:** URLs for 5 minutes plus a random extra of up to 10%. `NOT_FOUND` for 10 seconds.
     * **Create:** after saving a new link, delete its Redis key, in case an earlier request left a `NOT_FOUND` there.
-    * **Deactivate (design only):** update Postgres first, then delete the Redis key.
+    * **Deactivate:** update Postgres first, then delete the Redis key. The key is deleted even if the link was already inactive, which also clears a stale entry left by an earlier failed delete.
     * **If Redis fails:** every Redis call gives up after 100 ms. A failed read counts as "not in Redis" and the app asks Postgres. A failed write is ignored. Redis is not part of the health check, so a Redis outage does not take the app out of the load balancer.
 - **Why:**
     * Redis answers from memory, so most redirects never reach Postgres. Postgres stays the source of truth.
@@ -118,7 +118,7 @@ Keep each entry short: a few lines is enough.
 
 ## Things I left out on purpose (scope)
 - Custom aliases, expiry
-- Built: create, and redirect with the Redis cache. Being built before hand-in: click statistics through Kafka (it stays design only if it is not working and explainable by the stop date). Design only: OIDC sign-in and JWT validation (D-05), listing and deactivating links, the load balancer and the second data center. Reason: limited time, and the brief asks for the thinking process rather than a complete solution.
+- Built: create, redirect with the Redis cache, click statistics through Kafka (D-04), deactivate, and the stats endpoint. Design only: OIDC sign-in and JWT validation (D-05), listing links, the load balancer and the second data center. Reason: limited time, and the brief asks for the thinking process rather than a complete solution.
 
 ## Known limitations and next steps
 -
