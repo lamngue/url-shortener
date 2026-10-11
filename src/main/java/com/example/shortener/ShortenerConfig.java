@@ -5,7 +5,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration
-@EnableConfigurationProperties(ShortenerProperties.class)
+@EnableConfigurationProperties({ShortenerProperties.class, LinkCacheProperties.class})
 public class ShortenerConfig {
 
     @Bean

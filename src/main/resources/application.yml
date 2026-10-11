@@ -16,6 +16,9 @@ spring:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
+      # Redis is only a cache: give up quickly and fall back to Postgres (Lettuce waits 60s by default).
+      timeout: 100ms
+      connect-timeout: 100ms
 
   mvc:
     problemdetails:
@@ -27,3 +30,14 @@ shortener:
   # The empty default turns a missing variable into null, so @NotNull reports "k is required"
   # instead of Spring's generic "Could not resolve placeholder".
   short-code-k: ${SHORT_CODE_K:}
+  cache:
+    positive-ttl: 5m
+    negative-ttl: 10s
+    jitter: 0.1
+
+management:
+  health:
+    redis:
+      # Redis is optional (reads fall back to Postgres), so a Redis outage must not mark
+      # every instance DOWN and make the load balancer drop them all.
+      enabled: false

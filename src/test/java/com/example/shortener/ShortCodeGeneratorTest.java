@@ -2,6 +2,7 @@ package com.example.shortener;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.HashSet;
@@ -43,5 +44,43 @@ class ShortCodeGeneratorTest {
     void invalidKIsRejected(long k) { 
         /* assertThrows here */
         assertThrows(IllegalArgumentException.class, () -> new ShortCodeGenerator(k));
+    }
+
+    @Test
+    void nullIsInvalid() {
+        assertFalse(ShortCodeGenerator.isValidCode(null));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"0000000", "02tdk01", "zx6MFzz", "AZaz019", "zzzzzzz", "ZZZZZZZ"})
+    void validCodesAreAccepted(String code) {
+        assertTrue(ShortCodeGenerator.isValidCode(code));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "",            // empty
+        "abc",         // too short
+        "abcdef",      // 6 characters
+        "abcdefgh",    // 8 characters
+        "abc-123",     // right length, bad character
+        "abc_123",
+        "abc 123",
+        "abc/123",
+        " abcdef",     // leading space
+        "abcdef\n",    // trailing newline
+        "abcdéfg",     // accented letter, 7 characters
+        "１２３４５６７"  // full-width digits, 7 characters
+    })
+    void invalidCodesAreRejected(String code) {
+        assertFalse(ShortCodeGenerator.isValidCode(code));
+    }
+
+    @Test
+    void everyGeneratedCodeIsValid() {
+        ShortCodeGenerator generator = new ShortCodeGenerator(2654435761L);
+        for (long n = 0; n < 10_000; n++) {
+            assertTrue(ShortCodeGenerator.isValidCode(generator.generate(n)), "counter " + n);
+        }
     }
 }
