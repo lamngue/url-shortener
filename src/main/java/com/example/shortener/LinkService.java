@@ -11,13 +11,15 @@ public class LinkService {
     private final IdSource idSource;
     private final ShortCodeGenerator generator;
     private final LinkRepository repository;
+    private final LinkCache cache;
     private final String baseUrl;
 
-    public LinkService(IdSource idSource, ShortCodeGenerator generator,
-                       LinkRepository repository, ShortenerProperties properties) {
+    public LinkService(IdSource idSource, ShortCodeGenerator generator, LinkRepository repository,
+                       LinkCache cache, ShortenerProperties properties) {
         this.idSource = idSource;
         this.generator = generator;
         this.repository = repository;
+        this.cache = cache;
         this.baseUrl = stripTrailingSlash(properties.baseUrl());
     }
 
@@ -27,6 +29,9 @@ public class LinkService {
         long id = idSource.nextId();
         String code = generator.generate(id);
         repository.save(new Link(id, code, longUrl, ANONYMOUS_OWNER));
+        // After the save, like D-03: someone may have probed this code before it existed, leaving
+        // a NOT_FOUND entry. LinkCache ignores Redis errors, so this cannot fail the create.
+        cache.evict(code);
         return new CreateLinkResponse(code, baseUrl + "/" + code);
     }
 
