@@ -1,4 +1,4 @@
-package com.example.shortener;
+package com.example.shortener.config;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;

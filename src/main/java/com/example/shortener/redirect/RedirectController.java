@@ -1,4 +1,4 @@
-package com.example.shortener;
+package com.example.shortener.redirect;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;

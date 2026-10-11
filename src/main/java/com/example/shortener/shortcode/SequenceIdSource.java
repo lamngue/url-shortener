@@ -1,4 +1,4 @@
-package com.example.shortener;
+package com.example.shortener.shortcode;
 
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;

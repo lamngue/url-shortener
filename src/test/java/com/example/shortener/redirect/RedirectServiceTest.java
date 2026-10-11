@@ -1,4 +1,8 @@
-package com.example.shortener;
+package com.example.shortener.redirect;
+
+import com.example.shortener.cache.LinkCache;
+import com.example.shortener.link.Link;
+import com.example.shortener.link.LinkRepository;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;

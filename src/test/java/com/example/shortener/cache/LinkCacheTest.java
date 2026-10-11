@@ -1,4 +1,4 @@
-package com.example.shortener;
+package com.example.shortener.cache;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

@@ -1,4 +1,4 @@
-package com.example.shortener;
+package com.example.shortener.link;
 
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;

@@ -1,4 +1,9 @@
-package com.example.shortener;
+package com.example.shortener.link;
+
+import com.example.shortener.cache.LinkCache;
+import com.example.shortener.config.ShortenerProperties;
+import com.example.shortener.shortcode.IdSource;
+import com.example.shortener.shortcode.ShortCodeGenerator;
 
 import org.springframework.stereotype.Service;
 

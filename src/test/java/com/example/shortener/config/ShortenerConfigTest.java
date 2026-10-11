@@ -1,4 +1,7 @@
-package com.example.shortener;
+package com.example.shortener.config;
+
+import com.example.shortener.cache.LinkCacheProperties;
+import com.example.shortener.shortcode.ShortCodeGenerator;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;

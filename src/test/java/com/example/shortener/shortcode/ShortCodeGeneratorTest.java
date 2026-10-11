@@ -1,4 +1,4 @@
-package com.example.shortener;
+package com.example.shortener.shortcode;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;

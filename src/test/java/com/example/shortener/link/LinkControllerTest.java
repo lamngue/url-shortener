@@ -1,4 +1,4 @@
-package com.example.shortener;
+package com.example.shortener.link;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;

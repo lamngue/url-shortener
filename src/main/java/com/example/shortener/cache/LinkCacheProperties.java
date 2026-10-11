@@ -1,4 +1,4 @@
-package com.example.shortener;
+package com.example.shortener.cache;
 
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;

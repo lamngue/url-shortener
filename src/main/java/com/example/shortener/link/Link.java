@@ -1,4 +1,4 @@
-package com.example.shortener;
+package com.example.shortener.link;
 
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;

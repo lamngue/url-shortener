@@ -1,7 +1,7 @@
-package com.example.shortener;
+package com.example.shortener.shortcode;
 import java.math.BigInteger;
 
-class ShortCodeGenerator {
+public class ShortCodeGenerator {
     private final long K;
     private static final BigInteger MODULUS = BigInteger.valueOf(62).pow(7);
     public ShortCodeGenerator(long K) {

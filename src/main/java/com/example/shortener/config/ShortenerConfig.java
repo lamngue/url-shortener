@@ -1,4 +1,7 @@
-package com.example.shortener;
+package com.example.shortener.config;
+
+import com.example.shortener.cache.LinkCacheProperties;
+import com.example.shortener.shortcode.ShortCodeGenerator;
 
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;

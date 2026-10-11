@@ -1,4 +1,4 @@
-package com.example.shortener;
+package com.example.shortener.link;
 
 import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.NotBlank;

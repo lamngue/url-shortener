@@ -1,4 +1,4 @@
-package com.example.shortener;
+package com.example.shortener.redirect;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;

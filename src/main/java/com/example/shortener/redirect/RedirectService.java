@@ -1,4 +1,9 @@
-package com.example.shortener;
+package com.example.shortener.redirect;
+
+import com.example.shortener.cache.LinkCache;
+import com.example.shortener.link.Link;
+import com.example.shortener.link.LinkRepository;
+import com.example.shortener.shortcode.ShortCodeGenerator;
 
 import org.springframework.stereotype.Service;
 
