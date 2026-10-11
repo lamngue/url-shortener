@@ -13,14 +13,18 @@ import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
 import java.time.Duration;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class LinkServiceTest {
@@ -89,5 +93,53 @@ class LinkServiceTest {
 
         assertEquals("02tdk01", response.code());
         verify(repository).save(any(Link.class));
+    }
+
+    @Test
+    void deactivateSavesTheLinkThenEvictsTheCache() {
+        Link link = new Link(1L, "02tdk01", "https://example.com", LinkService.ANONYMOUS_OWNER);
+        when(repository.findByCode("02tdk01")).thenReturn(Optional.of(link));
+
+        assertTrue(service().deactivate("02tdk01"));
+
+        assertFalse(link.isActive());
+        // Database first, then cache (D-03).
+        InOrder order = inOrder(repository, cache);
+        order.verify(repository).save(link);
+        order.verify(cache).evict("02tdk01");
+    }
+
+    @Test
+    void deactivatingAnInactiveLinkSucceedsWithoutSavingButStillEvicts() {
+        Link link = new Link(1L, "02tdk01", "https://example.com", LinkService.ANONYMOUS_OWNER);
+        link.deactivate();
+        when(repository.findByCode("02tdk01")).thenReturn(Optional.of(link));
+
+        assertTrue(service().deactivate("02tdk01"));
+
+        verify(repository, never()).save(any(Link.class));
+        verify(cache).evict("02tdk01");
+    }
+
+    @Test
+    void deactivatingAnUnknownCodeChangesNothing() {
+        when(repository.findByCode("02tdk01")).thenReturn(Optional.empty());
+
+        assertFalse(service().deactivate("02tdk01"));
+
+        verify(repository, never()).save(any(Link.class));
+        verifyNoInteractions(cache);
+    }
+
+    @Test
+    void deactivatingAnInvalidCodeNeverReachesTheDatabase() {
+        assertFalse(service().deactivate("favicon.ico"));
+
+        verifyNoInteractions(repository, cache);
+    }
+
+    private LinkService service() {
+        return new LinkService(idSource, generator, repository, cache,
+                new ShortenerProperties("http://localhost:8080", K));
     }
 }

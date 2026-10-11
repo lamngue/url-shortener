@@ -13,6 +13,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -68,5 +69,22 @@ class LinkControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void deactivateReturns204() throws Exception {
+        when(linkService.deactivate("02tdk01")).thenReturn(true);
+
+        mvc.perform(delete("/api/links/02tdk01"))
+                .andExpect(status().isNoContent());
+    }
+
+    @Test
+    void deactivateUnknownCodeReturns404WithMessage() throws Exception {
+        when(linkService.deactivate("zzzzzzz")).thenReturn(false);
+
+        mvc.perform(delete("/api/links/zzzzzzz"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.detail").value("Code not found"));
     }
 }

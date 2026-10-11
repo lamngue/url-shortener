@@ -7,6 +7,8 @@ import com.example.shortener.shortcode.ShortCodeGenerator;
 
 import org.springframework.stereotype.Service;
 
+import java.util.Optional;
+
 @Service
 public class LinkService {
 
@@ -38,6 +40,31 @@ public class LinkService {
         // a NOT_FOUND entry. LinkCache ignores Redis errors, so this cannot fail the create.
         cache.evict(code);
         return new CreateLinkResponse(code, baseUrl + "/" + code);
+    }
+
+    /**
+     * Deactivates a link. Returns false if no link has this code. Deactivating an already
+     * inactive link is not an error (DELETE is idempotent).
+     */
+    public boolean deactivate(String code) {
+        if (!ShortCodeGenerator.isValidCode(code)) {
+            return false;
+        }
+        Optional<Link> found = repository.findByCode(code);
+        if (found.isEmpty()) {
+            return false;
+        }
+        Link link = found.get();
+        if (link.isActive()) {
+            link.deactivate();
+            repository.save(link);
+        }
+        // Database first, then cache (D-03). A redirect that read the old row just before the
+        // update can still put it back; the cache TTL limits how long that lasts. Evicting even
+        // when the link was already inactive also clears a stale entry left by an earlier failed
+        // evict.
+        cache.evict(code);
+        return true;
     }
 
     private static String stripTrailingSlash(String url) {

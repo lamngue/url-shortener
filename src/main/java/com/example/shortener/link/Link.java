@@ -45,6 +45,11 @@ public class Link implements Persistable<Long> {
         this.createdAt = Instant.now();
     }
 
+    // Soft delete: the row stays, so the code is never reused and its statistics are kept.
+    public void deactivate() {
+        this.active = false;
+    }
+
     @PostPersist
     @PostLoad
     void markNotNew() {
