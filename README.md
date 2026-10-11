@@ -39,7 +39,7 @@ Key decisions are explained in [decisions.md](decisions.md).
 ## Tech stack
 
 - Language and version: Java 21
-- Framework: Spring Boot 4.1 (Web MVC, Validation, Data JPA with Flyway, Data Redis, Actuator). Spring Kafka. Design only: Spring Security OAuth2 resource server
+- Framework: Spring Boot 4.1 (Web MVC, Validation, Data JPA with Flyway, Data Redis, Actuator). Spring Kafka, springdoc (OpenAPI spec and Swagger UI). Design only: Spring Security OAuth2 resource server
 - Database: PostgreSQL
 - Cache: Redis
 - Messaging: Kafka
@@ -75,6 +75,8 @@ curl http://localhost:8080/api/links/<code>/stats
 # 6. Deactivate the link: the next redirect returns 404
 curl -i -X DELETE http://localhost:8080/api/links/<code>
 ```
+
+The API can also be tried in the browser with Swagger UI at http://localhost:8080/swagger-ui/index.html (OpenAPI spec at `/v3/api-docs`). Set `SWAGGER_ENABLED=false` to turn both off where the API docs should not be public. The redirect itself is easiest to see with `curl -i`, because a browser follows it.
 
 Stop with `docker compose down` (add `-v` to remove data).
 

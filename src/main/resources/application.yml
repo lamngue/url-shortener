@@ -66,3 +66,11 @@ management:
       # Redis is optional (reads fall back to Postgres), so a Redis outage must not mark
       # every instance DOWN and make the load balancer drop them all.
       enabled: false
+
+springdoc:
+  # Swagger UI at /swagger-ui/index.html, OpenAPI spec at /v3/api-docs.
+  # On for local use; set SWAGGER_ENABLED=false where the API docs should not be public.
+  api-docs:
+    enabled: ${SWAGGER_ENABLED:true}
+  swagger-ui:
+    enabled: ${SWAGGER_ENABLED:true}
