@@ -4,3 +4,9 @@
 shortener:
   # TEST VALUE ONLY. Never use this K outside tests.
   short-code-k: 2654435761
+
+spring:
+  kafka:
+    admin:
+      # Integration tests have no Kafka container: do not try to create the topic at startup.
+      auto-create: false

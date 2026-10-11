@@ -3,6 +3,7 @@ package com.example.shortener.redirect;
 import com.example.shortener.cache.LinkCache;
 import com.example.shortener.link.Link;
 import com.example.shortener.link.LinkRepository;
+import com.example.shortener.recorder.ClickRecorder;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -24,7 +25,8 @@ class RedirectServiceTest {
 
     private final LinkCache cache = mock(LinkCache.class);
     private final LinkRepository repository = mock(LinkRepository.class);
-    private final RedirectService service = new RedirectService(cache, repository);
+    private final ClickRecorder clickRecorder = mock(ClickRecorder.class);
+    private final RedirectService service = new RedirectService(cache, repository, clickRecorder);
 
     @ParameterizedTest
     @NullSource
@@ -32,7 +34,7 @@ class RedirectServiceTest {
     void invalidFormatIsNotFoundWithoutTouchingCacheOrDatabase(String code) {
         assertThat(service.resolve(code)).isEmpty();
 
-        verifyNoInteractions(cache, repository);
+        verifyNoInteractions(cache, repository, clickRecorder);
     }
 
     @Test
@@ -41,6 +43,7 @@ class RedirectServiceTest {
 
         assertThat(service.resolve(CODE)).contains(URL);
         verifyNoInteractions(repository);
+        verify(clickRecorder).record(CODE);
     }
 
     @Test
@@ -49,6 +52,7 @@ class RedirectServiceTest {
 
         assertThat(service.resolve(CODE)).isEmpty();
         verifyNoInteractions(repository);
+        verifyNoInteractions(clickRecorder);
     }
 
     @Test
@@ -58,6 +62,7 @@ class RedirectServiceTest {
 
         assertThat(service.resolve(CODE)).contains(URL);
         verify(cache).putUrl(CODE, URL);
+        verify(clickRecorder).record(CODE);
     }
 
     @Test
@@ -67,6 +72,7 @@ class RedirectServiceTest {
 
         assertThat(service.resolve(CODE)).isEmpty();
         verify(cache).putNotFound(CODE);
+        verifyNoInteractions(clickRecorder);
     }
 
     @Test
@@ -78,5 +84,6 @@ class RedirectServiceTest {
 
         assertThat(service.resolve(CODE)).isEmpty();
         verify(cache).putNotFound(CODE);
+        verifyNoInteractions(clickRecorder);
     }
 }

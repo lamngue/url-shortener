@@ -29,7 +29,11 @@ spring:
     producer:
       # acks=all: Kafka confirms only when every in-sync copy has the event (also Kafka's default).
       acks: all
+      # Click events are sent as JSON. No Java class name in the message headers, so the consumer
+      # does not depend on the sender's class names.
+      value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer
       properties:
+        spring.json.add.type.headers: false
         # The redirect must not wait for Kafka: give up after 100 ms and drop the click (D-04).
         # Kafka's default would block the request thread for up to 60 seconds.
         max.block.ms: 100
