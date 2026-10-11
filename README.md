@@ -145,5 +145,7 @@ Not covered yet: automated end-to-end tests with a real Kafka, and a Postgres ou
 
 ## Use of AI tools
 
-AI tools were used for: (TODO: be specific, for example boilerplate and review of ideas, with the VibeWise plugin for Claude Code if that is true).
+AI tools were used for: Write Java/Spring code, built in small steps from my designs, README and decision-log draft I reviewed, fact checks (Boot 4, Postgres 18, Testcontainers).
+I did: wrote the code generator and its tests; removed the AI's block allocator code because I couldn't explain it; chose the shuffle's threat model; chose feature packages, 404 for unknown and deactivated, idempotent 204, clicks only on 302.
+
 All design decisions and the code were reviewed and are understood by me.
