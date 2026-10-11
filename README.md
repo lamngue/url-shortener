@@ -20,7 +20,7 @@ Client -> Load balancer -> Spring Boot app (stateless, many instances)
 ```
 
 - Redirect path: check Redis, on a miss read Postgres and fill Redis, answer with a 302, publish a click event without waiting.
-- Create path: validate the JWT, take the next ID from the app's ID block, scramble it, encode it in base 62, save the row, return the short URL.
+- Create path: validate the JWT, take the next ID from the Postgres sequence, scramble it, encode it in base 62, save the row, return the short URL.
 - Availability: two data centers, each with the same setup, behind one load balancer. Each data center has its own ID range, so codes never collide.
 
 Key decisions are explained in [decisions.md](decisions.md).

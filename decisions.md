@@ -15,9 +15,11 @@ Keep each entry short: a few lines is enough.
 - **Decision:** Take the next number from a counter, scramble it with a secret, reversible shuffle, encode it in base 62
 - **Why:**  A counter never produce same number twice (kept incrementing), so no collision check and no retry on insert. 7 characters can give about 3.5 trillion codes. 
     * At about 12 creates per second, a plain Postgres sequence would also work fine.
-    * Blocks are a cheap optimization. They also fit the two-data-center story, because each data center gets its own range and never needs to coordinate.
+    * At about 12 creates per second, a plain Postgres sequence is enough (see D-08). Giving each data center its own range keeps codes from colliding.
     * Keeps `code` stored in DB. Because if the shuffle is modified, the decoder will decode into the wrong row.
-- **Trade-off:** The counter is a point of coordination. Each app server takes a block of IDs to avoid querying database every time. The time shuffle hides the order only, not the security.
+    
+- **Trade-off:** The counter is a point of coordination: every create asks Postgres for the next number. The shuffle hides the order only. K can be recovered from two consecutive codes, so links can be enumerated, and guessing hits a live link about once in a thousand tries at full capacity. Private targets need access control, and stronger protection needs a keyed non-linear shuffle or longer random codes, plus rate limiting.
+
 - **Revisit if:** Several regions write at once (give each region unique ID range), or the write rate outgrow one counter.
 
 ### D-02: Redirect with 302
@@ -75,14 +77,14 @@ Keep each entry short: a few lines is enough.
 - **Trade-off:** Two extra dependencies (the Flyway starter and the Postgres module). A migration that has already run must never be edited, so every change is a new file. More typing than auto-generation.
 - **Revisit if:** The schema changes so often that migration files slow me down, or I need rollback tooling. In that case I would keep auto-generation for local experiments only.
 
-### D-08: ID blocks from a Postgres sequence
+### D-08: Plain Postgres sequence per data center for IDs
 - **Date:** 2026-10-11
-- **Context:** Every new link needs a unique counter number (D-01). Asking the database for every number adds a round trip per create, and each data center needs its own range.
-- **Options considered:** One `nextval` per link, a counter table with row locking, a sequence with `INCREMENT BY 1000`
-- **Decision:** A sequence with `INCREMENT BY 1000`, `NO CYCLE` and a `MAXVALUE` below 62^7. Each app instance takes one value as the start of a block and hands out that number plus the next 999 from memory. Each data center has its own sequence with a non-overlapping `MINVALUE` and `MAXVALUE`.
-- **Why:** A sequence never gives the same number to two callers, so blocks never overlap. One database call serves 1,000 links. Numbers left in a block when an instance restarts are lost, which is harmless with about 3.5 trillion codes.
-- **Trade-off:** Gaps in the numbers, and numbers that are not in order across instances. Creates still need Postgres to store the link, so this reduces load rather than removing the dependency.
-- **Revisit if:** The write rate outgrows one sequence (make blocks bigger first), more regions need their own ranges, or the numbers get close to `MAXVALUE`.
+- **Context:** Every link needs a unique number before it becomes a code. An earlier draft used a sequence with INCREMENT BY 1000 and an in-memory block allocator in each app instance.
+- **Options considered:** (1) One `nextval` per create from a plain sequence. (2) Blocks of 1,000 numbers per app instance, handed out from memory. (3) A hash of the URL (rejected in D-01).
+- **Decision:** Option 1. Sequence `link_id_seq` with MINVALUE 0, START 0, INCREMENT BY 1, NO CYCLE and MAXVALUE 3,521,614,606,207 (62^7 - 1, the largest number the generator accepts). Each data center gets its own sequence with a non-overlapping range, for example one half of the range each. The ID source sits behind a small interface.
+- **Why:** At about 12 creates per second, one `nextval` per create is easy for Postgres. A plain sequence is simple to explain, has no lock code, and loses nothing on restart. The per-data-center ranges are what prevent collisions, and they work the same way without blocks. The block allocator was dropped because it added a lock, lost numbers on restart and more code to test, for a rate that does not need it.
+- **Trade-off:** One database call on every create (the row has to be written anyway, so the extra call is small). Gaps appear when an insert fails, because sequences are not rolled back, which is fine with 3.5 trillion numbers. Each data center's range is fixed, so adding more needs planning.
+- **Revisit if:** The create rate grows until the `nextval` call shows up in metrics. Then each instance takes a block (for example 1,000) from the sequence and hands numbers out from memory behind the same interface. Also revisit if there are more than two data centers.
 ---
 
 ## Questions for the team (ask before building if unclear)

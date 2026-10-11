@@ -16,3 +16,14 @@ spring:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
+
+  mvc:
+    problemdetails:
+      enabled: true
+
+shortener:
+  base-url: ${APP_BASE_URL:http://localhost:8080}
+  # Required: the secret multiplier for the short code shuffle. No default on purpose.
+  # The empty default turns a missing variable into null, so @NotNull reports "k is required"
+  # instead of Spring's generic "Could not resolve placeholder".
+  short-code-k: ${SHORT_CODE_K:}

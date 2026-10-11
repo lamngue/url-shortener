@@ -9,13 +9,14 @@ CREATE TABLE links (
 
 CREATE INDEX links_owner_sub_idx ON links (owner_sub);
 
--- One nextval claims a block of INCREMENT BY ids; the app hands them out from memory.
--- MAXVALUE is the start of the last block whose ids all stay below 62^7 (7 base-62 chars).
+-- One nextval per created link.
+-- MAXVALUE is 62^7 - 1, the largest id that fits in 7 base-62 characters, so the sequence
+-- runs out exactly where the short code generator's valid range ends.
 -- This range is for one data center; another data center would get its own disjoint range.
 CREATE SEQUENCE link_id_seq
     AS BIGINT
-    INCREMENT BY 1000
+    INCREMENT BY 1
     MINVALUE 0
-    MAXVALUE 3521614605000
+    MAXVALUE 3521614606207
     START WITH 0
     NO CYCLE;
