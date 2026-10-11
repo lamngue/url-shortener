@@ -1,9 +1,9 @@
 package com.example.shortener;
 
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.test.context.SpringBootTest;
 
-@SpringBootTest
+// Starting proves Flyway ran V1 and Hibernate's validate accepted the schema, against real Postgres.
+@IntegrationTest
 class UrlShortenerApplicationTests {
 
 	@Test

@@ -1,0 +1,6 @@
+# Loaded on top of src/main/resources/application.yml when the "test" profile is active.
+# Only test-only values belong here. Postgres and Redis connections come from the
+# Testcontainers @ServiceConnection beans, not from this file.
+shortener:
+  # TEST VALUE ONLY. Never use this K outside tests.
+  short-code-k: 2654435761
