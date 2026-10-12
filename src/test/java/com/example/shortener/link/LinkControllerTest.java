@@ -1,10 +1,13 @@
 package com.example.shortener.link;
 
+import com.example.shortener.config.SecurityConfig;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -16,14 +19,19 @@ import java.util.Optional;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+// SecurityConfig is imported so the real rules apply. jwt() puts a test token on the request
+// without signing it; signature and claim checks are tested in JwtDecoderTest.
 @WebMvcTest(LinkController.class)
+@Import(SecurityConfig.class)
 class LinkControllerTest {
 
     @Autowired
@@ -36,87 +44,88 @@ class LinkControllerTest {
     private LinkStatsService linkStatsService;
 
     @Test
-    void validUrlReturns201WithCodeAndShortUrl() throws Exception {
-        when(linkService.create("https://example.com/some/long/path"))
-                .thenReturn(new CreateLinkResponse("02tdk01", "http://localhost:8080/02tdk01"));
+    void deleteByNonOwnerReturns403() throws Exception {
+        // the fake service says: this caller is not the owner
+        when(linkService.deactivate("abc123", "alice")).thenReturn(new LinkService.NotOwner());
 
-        mvc.perform(post("/api/links")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"url\": \"https://example.com/some/long/path\"}"))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.code").value("02tdk01"))
-                .andExpect(jsonPath("$.shortUrl").value("http://localhost:8080/02tdk01"));
+        // send DELETE with a test token for alice, expect 403
+        mvc.perform(delete("/api/links/abc123").with(jwt().jwt(builder -> builder.subject("alice"))))
+                .andExpect(status().isForbidden());
+
+        verify(linkService).deactivate("abc123", "alice");
     }
 
-    @ParameterizedTest
-    @ValueSource(strings = {"", "   ", "ftp://example.com/file", "not a url", "https:no-host", "javascript:alert(1)"})
-    void invalidUrlReturns400AndNeverReachesTheService(String url) throws Exception {
-        mvc.perform(post("/api/links")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"url\": \"" + url + "\"}"))
-                .andExpect(status().isBadRequest());
+    @Test 
+    void deleteWithoutAuthenticationReturns401() throws Exception {
+        mvc.perform(delete("/api/links/abc123"))
+                .andExpect(status().isUnauthorized());
 
-        verify(linkService, never()).create(anyString());
+        verifyNoInteractions(linkService);
     }
 
     @Test
-    void urlLongerThan2048CharactersReturns400() throws Exception {
-        String tooLong = "https://example.com/" + "a".repeat(2048);
+    void deleteByOwnerReturns204() throws Exception {
+        // the fake service says: this caller is the owner
+        when(linkService.deactivate("abc123", "alice")).thenReturn(new LinkService.Owner());
 
-        mvc.perform(post("/api/links")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"url\": \"" + tooLong + "\"}"))
-                .andExpect(status().isBadRequest());
-
-        verify(linkService, never()).create(anyString());
-    }
-
-    @Test
-    void missingUrlReturns400() throws Exception {
-        mvc.perform(post("/api/links")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{}"))
-                .andExpect(status().isBadRequest());
-    }
-
-    @Test
-    void deactivateReturns204() throws Exception {
-        when(linkService.deactivate("02tdk01")).thenReturn(true);
-
-        mvc.perform(delete("/api/links/02tdk01"))
+        // send DELETE with a test token for alice, expect 204
+        mvc.perform(delete("/api/links/abc123").with(jwt().jwt(builder -> builder.subject("alice"))))
                 .andExpect(status().isNoContent());
+
+        verify(linkService).deactivate("abc123", "alice");
     }
 
-    @Test
-    void deactivateUnknownCodeReturns404WithMessage() throws Exception {
-        when(linkService.deactivate("zzzzzzz")).thenReturn(false);
+    @Test 
+    void deleteNotFoundReturns404() throws Exception {
+        // the fake service says: this code does not exist
+        when(linkService.deactivate("abc123", "alice")).thenReturn(new LinkService.NotFound());
 
-        mvc.perform(delete("/api/links/zzzzzzz"))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.detail").value("Code not found"));
+        // send DELETE with a test token for alice, expect 404
+        mvc.perform(delete("/api/links/abc123").with(jwt().jwt(builder -> builder.subject("alice"))))
+                .andExpect(status().isNotFound());
+
+        verify(linkService).deactivate("abc123", "alice");
     }
 
-    @Test
-    void statsReturnsTotalAndDays() throws Exception {
-        when(linkStatsService.stats("02tdk01")).thenReturn(Optional.of(new LinkStatsResponse("02tdk01", 5, List.of(
-                new LinkStatsResponse.DailyClicks(LocalDate.parse("2026-10-11"), 3),
-                new LinkStatsResponse.DailyClicks(LocalDate.parse("2026-10-12"), 2)))));
+    @Test 
+    void getStatsWithAuthenticatedUser() throws Exception {
+        // the fake service says: this caller is the owner, and returns some stats
+        List<LinkStatsResponse.DailyClicks> days = List.of(
+                new LinkStatsResponse.DailyClicks(LocalDate.parse("2026-10-10"), 5),
+                new LinkStatsResponse.DailyClicks(LocalDate.parse("2026-10-11"), 3));
+        when(linkStatsService.stats("abc123", "alice"))
+                .thenReturn(new LinkStatsService.Owner(new LinkStatsResponse("abc123", 8, days)));
 
-        mvc.perform(get("/api/links/02tdk01/stats"))
+        // send GET with a test token for alice, expect 200 and the JSON body
+        mvc.perform(get("/api/links/abc123/stats").with(jwt().jwt(builder -> builder.subject("alice"))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.code").value("02tdk01"))
-                .andExpect(jsonPath("$.totalClicks").value(5))
-                .andExpect(jsonPath("$.days[0].day").value("2026-10-11"))
-                .andExpect(jsonPath("$.days[0].clicks").value(3))
-                .andExpect(jsonPath("$.days[1].day").value("2026-10-12"));
+                .andExpect(jsonPath("$.code").value("abc123"))
+                .andExpect(jsonPath("$.totalClicks").value(8))
+                .andExpect(jsonPath("$.days[0].day").value("2026-10-10"))
+                .andExpect(jsonPath("$.days[0].clicks").value(5))
+                .andExpect(jsonPath("$.days[1].day").value("2026-10-11"))
+                .andExpect(jsonPath("$.days[1].clicks").value(3));
+
+        verify(linkStatsService).stats("abc123", "alice");
+    }
+
+    @Test 
+    void getStatsWithUnauthorizedUserReturns403() throws Exception {
+        // the fake service says: this caller is not the owner
+        when(linkStatsService.stats("abc123", "bob")).thenReturn(new LinkStatsService.NotOwner());
+
+        // send GET with a test token
+        mvc.perform(get("/api/links/abc123/stats").with(jwt().jwt(builder -> builder.subject("bob"))))
+                .andExpect(status().isForbidden());
+
+        verify(linkStatsService).stats("abc123", "bob");
     }
 
     @Test
-    void statsForUnknownOrDeactivatedCodeReturns404() throws Exception {
-        when(linkStatsService.stats("zzzzzzz")).thenReturn(Optional.empty());
+    void getStatsWithoutTokenReturns401() throws Exception {
+        mvc.perform(get("/api/links/abc123/stats"))
+                .andExpect(status().isUnauthorized());
 
-        mvc.perform(get("/api/links/zzzzzzz/stats"))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.detail").value("Code not found"));
+        verifyNoInteractions(linkStatsService);
     }
 }

@@ -51,6 +51,13 @@ spring:
 
 shortener:
   base-url: ${APP_BASE_URL:http://localhost:8080}
+  # Access tokens (D-05). The identity provider's public keys (JWKS), the issuer it puts in "iss",
+  # and the audience this API expects in "aud". The defaults are placeholders for local runs: there
+  # is no identity provider yet, so /api requests answer 401 until real values are set.
+  jwt:
+    jwk-set-uri: ${JWT_JWK_SET_URI:http://localhost:9000/.well-known/jwks.json}
+    issuer: ${JWT_ISSUER:http://localhost:9000}
+    audience: ${JWT_AUDIENCE:url-shortener}
   # Required: the secret multiplier for the short code shuffle. No default on purpose.
   # The empty default turns a missing variable into null, so @NotNull reports "k is required"
   # instead of Spring's generic "Could not resolve placeholder".

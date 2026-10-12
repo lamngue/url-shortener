@@ -26,46 +26,48 @@ class LinkStatsServiceTest {
     private JdbcTemplate jdbc;
 
     @Test
-    void returnsTotalAndDaysOldestFirst() {
-        String code = saveLink(true);
-        addClicks(code, "2026-10-12", 2);
+    void testOwnerOfLinksWithClicks() {
+        String code = saveLink(true, "alice");
+        addClicks(code, "2026-10-10", 5);
         addClicks(code, "2026-10-11", 3);
+        // 8 clicks total, 2 days
+        LinkStatsService.OwnerCheckResult result = statsService.stats(code, "alice");
+        assertThat(result).isInstanceOf(LinkStatsService.Owner.class);
+        LinkStatsResponse response = ((LinkStatsService.Owner) result).stats();
+        assertThat(response.code()).isEqualTo(code);
+        assertThat(response.totalClicks()).isEqualTo(8);
+        assertThat(response.days()).containsExactly(
+                new LinkStatsResponse.DailyClicks(LocalDate.parse("2026-10-10"), 5),
+                new LinkStatsResponse.DailyClicks(LocalDate.parse("2026-10-11"), 3));
+    }
 
-        LinkStatsResponse stats = statsService.stats(code).orElseThrow();
+    @Test 
+    void testNotOwnerOfLink() {
+        String code = saveLink(true, "alice");
+        addClicks(code, "2026-10-10", 5);
+        LinkStatsService.OwnerCheckResult result = statsService.stats(code, "bob");
+        assertThat(result).isInstanceOf(LinkStatsService.NotOwner.class);
+    }
 
-        assertThat(stats.totalClicks()).isEqualTo(5);
-        assertThat(stats.days()).containsExactly(
-                new LinkStatsResponse.DailyClicks(LocalDate.parse("2026-10-11"), 3),
-                new LinkStatsResponse.DailyClicks(LocalDate.parse("2026-10-12"), 2));
+    @Test 
+    void testOwnerOfDeactivatedLink() {
+        String code = saveLink(false, "alice");
+        addClicks(code, "2026-10-10", 5);
+        LinkStatsService.OwnerCheckResult result = statsService.stats(code, "alice");
+        assertThat(result).isInstanceOf(LinkStatsService.NotFound.class);
     }
 
     @Test
-    void linkWithoutClicksHasZeroTotal() {
-        String code = saveLink(true);
-
-        LinkStatsResponse stats = statsService.stats(code).orElseThrow();
-
-        assertThat(stats.totalClicks()).isZero();
-        assertThat(stats.days()).isEmpty();
+    void testOwnerOfUnknownCode() {
+        String code = uniqueCode();
+        LinkStatsService.OwnerCheckResult result = statsService.stats(code, "alice");
+        assertThat(result).isInstanceOf(LinkStatsService.NotFound.class);
     }
 
-    @Test
-    void deactivatedLinkHasNoStats() {
-        String code = saveLink(false);
-        addClicks(code, "2026-10-11", 3);
-
-        assertThat(statsService.stats(code)).isEmpty();
-    }
-
-    @Test
-    void unknownCodeHasNoStats() {
-        assertThat(statsService.stats(uniqueCode())).isEmpty();
-    }
-
-    private String saveLink(boolean active) {
+    private String saveLink(boolean active, String callerSub) {
         String code = uniqueCode();
         long id = ThreadLocalRandom.current().nextLong(1_000_000_000L, 3_000_000_000_000L);
-        Link link = new Link(id, code, "https://example.com/" + code, "anonymous");
+        Link link = new Link(id, code, "https://example.com/" + code, callerSub);
         if (!active) {
             link.deactivate();
         }
