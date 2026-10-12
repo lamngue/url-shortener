@@ -84,5 +84,6 @@ springdoc:
     oauth:
       client-id: ${AUTH0_CLIENT_ID:PeWnBEO9JHh4v84BtGH205cZ5JPLQExw}
       use-pkce-with-authorization-code-grant: true
-      additional-query-string-params: audience=${JWT_AUDIENCE:url-shortener}
+      additional-query-string-params: 
+        audience: ${JWT_AUDIENCE:url-shortener}
       scopes: openid, profile, email

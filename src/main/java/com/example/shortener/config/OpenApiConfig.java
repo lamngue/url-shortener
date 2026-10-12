@@ -1,8 +1,5 @@
 package com.example.shortener.config;
 
-import java.util.List;
-
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -19,26 +16,24 @@ import io.swagger.v3.oas.models.security.SecurityScheme;
 @Configuration 
 public class OpenApiConfig {
     private static final String SECURITY_SCHEME = "OAuth2";
-    private JwtProperties jwtProperties = null;
 
-    @Value(${"springdoc.swagger-ui.oauth.scopes"})
-    String scopes;
-
-    SecurityScheme securityScheme = new SecurityScheme()
+    @Bean
+    public OpenAPI customOpenAPI(JwtProperties jwtProperties) {
+        return new OpenAPI()
+                .components(new Components()
+                        .addSecuritySchemes(SECURITY_SCHEME, new SecurityScheme()
                                 .type(SecurityScheme.Type.OAUTH2)
                                 .flows(new OAuthFlows()
                                         .authorizationCode(new OAuthFlow()
                                                 .authorizationUrl(jwtProperties.issuer() + "authorize") 
                                                 .tokenUrl(jwtProperties.issuer() + "oauth/token")
-                                                .scopes(new Scopes())
+                                                .scopes(new Scopes()
+                                                .addString("openid", "Sign in with OpenID Connect")
+                                                .addString("profile", "Your name")
+                                                .addString("email", "Your email address"))
                                         ))
-                                .description("OAuth2 authentication with Auth0");
-
-    @Bean
-    public OpenAPI customOpenAPI() {
-        return new OpenAPI()
-                .components(new Components()
-                        .addSecuritySchemes(SECURITY_SCHEME, securityScheme))
+                                .description("OAuth2 authentication with Auth0")
+                ))
                 .info(new Info().title("URL Shortener API").version("1.0"))
                 .addSecurityItem(new SecurityRequirement().addList(SECURITY_SCHEME));
     }
