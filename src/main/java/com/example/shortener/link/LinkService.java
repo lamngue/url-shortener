@@ -5,6 +5,7 @@ import com.example.shortener.config.ShortenerProperties;
 import com.example.shortener.shortcode.IdSource;
 import com.example.shortener.shortcode.ShortCodeGenerator;
 
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Service;
 
 import java.util.Optional;
@@ -14,6 +15,18 @@ public class LinkService {
 
     // Placeholder owner until authentication exists; then this becomes the token's `sub`.
     static final String ANONYMOUS_OWNER = "anonymous";
+
+    public sealed interface OwnerCheckResult permits Owner, NotOwner, NotFound {
+    }
+
+    public record Owner() implements OwnerCheckResult {
+    }
+
+    public record NotOwner() implements OwnerCheckResult {
+    }
+
+    public record NotFound() implements OwnerCheckResult {
+    }
 
     private final IdSource idSource;
     private final ShortCodeGenerator generator;
@@ -32,10 +45,10 @@ public class LinkService {
 
     // No @Transactional: the only write is one save(), which is already atomic. If it fails,
     // the id is simply lost (sequences never roll back), and gaps cost nothing.
-    public CreateLinkResponse create(String longUrl) {
+    public CreateLinkResponse create(String callerSub, String longUrl) {
         long id = idSource.nextId();
         String code = generator.generate(id);
-        repository.save(new Link(id, code, longUrl, ANONYMOUS_OWNER));
+        repository.save(new Link(id, code, longUrl, callerSub));
         // After the save, like D-03: someone may have probed this code before it existed, leaving
         // a NOT_FOUND entry. LinkCache ignores Redis errors, so this cannot fail the create.
         cache.evict(code);
@@ -46,15 +59,22 @@ public class LinkService {
      * Deactivates a link. Returns false if no link has this code. Deactivating an already
      * inactive link is not an error (DELETE is idempotent).
      */
-    public boolean deactivate(String code) {
+    public OwnerCheckResult deactivate(String code, String callerSub) {
         if (!ShortCodeGenerator.isValidCode(code)) {
-            return false;
+            return new NotFound();
         }
         Optional<Link> found = repository.findByCode(code);
         if (found.isEmpty()) {
-            return false;
+            return new NotFound();
+        }
+        boolean ownerSub = found.filter(link -> link.getOwnerSub().equals(callerSub)).isPresent();
+        // ownership check
+        if (!ownerSub) {
+            return new NotOwner();
         }
         Link link = found.get();
+
+        // if the caller is the owner, deactivate the link (soft delete) and evict the cache
         if (link.isActive()) {
             link.deactivate();
             repository.save(link);
@@ -64,8 +84,9 @@ public class LinkService {
         // when the link was already inactive also clears a stale entry left by an earlier failed
         // evict.
         cache.evict(code);
-        return true;
+        return new Owner();
     }
+
 
     private static String stripTrailingSlash(String url) {
         return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;

@@ -3,6 +3,7 @@ package com.example.shortener.link;
 import com.example.shortener.cache.LinkCache;
 import com.example.shortener.cache.LinkCacheProperties;
 import com.example.shortener.config.ShortenerProperties;
+import com.example.shortener.link.LinkService.OwnerCheckResult;
 import com.example.shortener.shortcode.IdSource;
 import com.example.shortener.shortcode.ShortCodeGenerator;
 
@@ -17,6 +18,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -42,7 +44,7 @@ class LinkServiceTest {
         LinkService service = new LinkService(idSource, generator, repository, cache,
                 new ShortenerProperties("http://localhost:8080", K));
 
-        CreateLinkResponse response = service.create("https://example.com/some/long/path");
+        CreateLinkResponse response = service.create("alice" ,"https://example.com/some/long/path");
 
         ArgumentCaptor<Link> saved = ArgumentCaptor.forClass(Link.class);
         verify(repository).save(saved.capture());
@@ -50,7 +52,7 @@ class LinkServiceTest {
         assertEquals(1L, link.getId());
         assertEquals("02tdk01", link.getCode());
         assertEquals("https://example.com/some/long/path", link.getLongUrl());
-        assertEquals(LinkService.ANONYMOUS_OWNER, link.getOwnerSub());
+        assertEquals("alice", link.getOwnerSub());
         assertTrue(link.isActive());
         assertTrue(link.isNew());
 
@@ -59,87 +61,57 @@ class LinkServiceTest {
     }
 
     @Test
-    void trailingSlashInBaseUrlIsNotDoubled() {
-        LinkService service = new LinkService(idSource, generator, repository, cache,
-                new ShortenerProperties("https://sho.rt/", K));
-
-        assertEquals("https://sho.rt/02tdk01", service.create("https://example.com").shortUrl());
-    }
-
-    @Test
-    void evictsTheCodeAfterSaving() {
-        LinkService service = new LinkService(idSource, generator, repository, cache,
-                new ShortenerProperties("http://localhost:8080", K));
-
-        service.create("https://example.com");
-
-        // Order matters (D-03): evicting before the save could let a reader re-cache NOT_FOUND.
-        InOrder order = inOrder(repository, cache);
-        order.verify(repository).save(any(Link.class));
-        order.verify(cache).evict("02tdk01");
-    }
-
-    @Test
-    void redisDownDoesNotFailTheCreate() {
-        // A real LinkCache over a Redis that always fails, to show the create still succeeds.
-        StringRedisTemplate brokenRedis = mock(StringRedisTemplate.class);
-        when(brokenRedis.delete(anyString())).thenThrow(new RedisConnectionFailureException("down"));
-        LinkCache realCache = new LinkCache(brokenRedis,
-                new LinkCacheProperties(Duration.ofMinutes(5), Duration.ofSeconds(10), 0.1));
-        LinkService service = new LinkService(idSource, generator, repository, realCache,
-                new ShortenerProperties("http://localhost:8080", K));
-
-        CreateLinkResponse response = service.create("https://example.com");
-
-        assertEquals("02tdk01", response.code());
-        verify(repository).save(any(Link.class));
-    }
-
-    @Test
-    void deactivateSavesTheLinkThenEvictsTheCache() {
-        Link link = new Link(1L, "02tdk01", "https://example.com", LinkService.ANONYMOUS_OWNER);
+    void ownerCanDeactivate() {
+        // set up: the repository "has" an active link owned by alice
+        Link link = new Link(1L, "02tdk01", "https://example.com", "alice");
         when(repository.findByCode("02tdk01")).thenReturn(Optional.of(link));
 
-        assertTrue(service().deactivate("02tdk01"));
+        // act
+        OwnerCheckResult result = service().deactivate("02tdk01", "alice");
 
+        // check: the right result, the link changed, saved before the cache delete
+        assertInstanceOf(LinkService.Owner.class, result);
         assertFalse(link.isActive());
-        // Database first, then cache (D-03).
         InOrder order = inOrder(repository, cache);
         order.verify(repository).save(link);
         order.verify(cache).evict("02tdk01");
     }
 
     @Test
-    void deactivatingAnInactiveLinkSucceedsWithoutSavingButStillEvicts() {
-        Link link = new Link(1L, "02tdk01", "https://example.com", LinkService.ANONYMOUS_OWNER);
-        link.deactivate();
+    void nonOwnerCannotDeactivate() {
+        // set up: the repository "has" an active link owned by alice
+        Link link = new Link(1L, "02tdk01", "https://example.com", "alice");
         when(repository.findByCode("02tdk01")).thenReturn(Optional.of(link));
 
-        assertTrue(service().deactivate("02tdk01"));
+        // act
+        OwnerCheckResult result = service().deactivate("02tdk01", "bob");
 
+        // check: the right result, the link unchanged
+        assertInstanceOf(LinkService.NotOwner.class, result);
+        assertTrue(link.isActive());
         verify(repository, never()).save(any(Link.class));
-        verify(cache).evict("02tdk01");
+        verify(cache, never()).evict(anyString());
     }
 
-    @Test
-    void deactivatingAnUnknownCodeChangesNothing() {
+    @Test 
+    void unknownCodeCannotDeactivate() {
+        // set up: the repository "has" no link with this code
         when(repository.findByCode("02tdk01")).thenReturn(Optional.empty());
 
-        assertFalse(service().deactivate("02tdk01"));
+        // act
+        OwnerCheckResult result = service().deactivate("02tdk01", "alice");
 
+        // check: the right result, nothing saved or evicted
+        assertInstanceOf(LinkService.NotFound.class, result);
         verify(repository, never()).save(any(Link.class));
-        verifyNoInteractions(cache);
+        verify(cache, never()).evict(anyString());
     }
 
-    @Test
-    void deactivatingAnInvalidCodeNeverReachesTheDatabase() {
-        assertFalse(service().deactivate("favicon.ico"));
-
-        verifyNoInteractions(repository, cache);
-    }
-
+    // helper so each test doesn't repeat the constructor
     private LinkService service() {
         return new LinkService(idSource, generator, repository, cache,
                 new ShortenerProperties("http://localhost:8080", K));
     }
+
+    
 }

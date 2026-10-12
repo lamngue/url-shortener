@@ -1,8 +1,11 @@
 package com.example.shortener.redirect;
 
+import com.example.shortener.config.SecurityConfig;
+
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -15,7 +18,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+// SecurityConfig is imported so the real rules apply: the redirect must work without a token.
 @WebMvcTest(RedirectController.class)
+@Import(SecurityConfig.class)
 class RedirectControllerTest {
 
     @Autowired
