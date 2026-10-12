@@ -68,14 +68,21 @@ Keep each entry short: a few lines is enough.
 - **Failure handling:** If a consumer dies, another one takes over from the last saved position. Some events are read again and skipped.
 - **Revisit if:** Exact counts are required (then write each click to a Postgres table first and publish it to Kafka from there, the "outbox pattern"), or deleting old event IDs becomes slow (then split the table by day and drop whole days).
 
-### D-05: JWT resource server, login through an OIDC provider (LEFT OUT)
-- **Date:** 2026-10-10
-- **Context:** Users must be authenticated, and each user may only manage their own links.
-- **Options considered:** Own user table and passwords, or JWTs from an OIDC provider.
-- **Decision:** Users log in at an OIDC provider (authorization code flow with PKCE, done by the client) and send the access token as a Bearer token. The API validates the signature with the provider's cached public keys (JWKS), plus exp, iss, aud and a pinned algorithm. `sub` identifies the owner. Redirects need no token.
-- **Why:** No passwords to store, MFA comes from the provider, and validation is stateless, so app servers scale freely. Ownership is checked on every link operation: 401 for an invalid token, 403 for someone else's link.
-- **Trade-off:** If the provider is down, new logins fail, but existing tokens work until they expire. A token cannot be revoked before it expires, so lifetimes are short.
-- **Revisit if:** Immediate revocation is needed (add introspection), or the provider's cost or lock-in becomes a problem.
+### D-05: Login through an OIDC provider; the API checks JWTs
+- **Date:** 2026-10-10 (updated 2026-10-13: built with Auth0)
+- **Context:** Users must log in, and each user may only manage their own links.
+- **Options considered:** (1) My own user table with passwords. (2) Tokens from an OIDC provider. For the provider: Keycloak in Docker, or a hosted service (Auth0).
+- **Decision:** Option 2, with Auth0.
+    * **Login:** Swagger UI sends the user to Auth0 (authorization code flow with PKCE). Swagger gets an access token and sends it as a Bearer token.
+    * **The API checks every token:** signature with Auth0's public keys (JWKS), RS256 only, not expired, the right issuer (`iss`), and the right audience (`aud` = `url-shortener`, my own `AudienceValidator`).
+    * **Ownership:** a link belongs to the token's `sub`. 401 for a missing or invalid token, 403 for someone else's link. The redirect needs no token.
+- **Why:**
+    * No passwords to store, and the provider handles login and MFA.
+    * Checking a token needs no database call, so app servers scale freely.
+    * Auth0 instead of Keycloak: my laptop has 8 GB of memory, and the interview is online anyway, so a hosted provider adds no new risk.
+- **Trade-off:** Login depends on Auth0 being reachable. A token cannot be cancelled before it expires, so lifetimes are short.
+- **Learned while building:** Auth0 only puts my API in `aud` if the login asks for it (`audience` parameter), and the application has to be allowed to request tokens for the API.
+- **Revisit if:** Immediate cancelling of tokens is needed, or the provider's cost or lock-in becomes a problem.
 
 ### D-06: Spring Boot 4.1.x
 - **Date:** 2026-10-11
@@ -118,7 +125,7 @@ Keep each entry short: a few lines is enough.
 
 ## Things I left out on purpose (scope)
 - Custom aliases, expiry
-- Built: create, redirect with the Redis cache, click statistics through Kafka (D-04), deactivate, and the stats endpoint. Design only: OIDC sign-in and JWT validation (D-05), listing links, the load balancer and the second data center. Reason: limited time, and the brief asks for the thinking process rather than a complete solution.
+- Built: create, redirect with the Redis cache, click statistics through Kafka (D-04), deactivate, the stats endpoint, and login with ownership checks (D-05). Design only: listing links, the load balancer and the second data center. Reason: limited time, and the brief asks for the thinking process rather than a complete solution.
 
 ## Known limitations and next steps
 -

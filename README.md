@@ -20,7 +20,7 @@ Client -> Load balancer -> Spring Boot app (stateless, many instances)
 ```
 
 - Redirect path: check the code format, check Redis, on a miss read Postgres and fill Redis (the URL, or a short-lived `NOT_FOUND` marker), answer with a 302 or 404, publish a click event without waiting.
-- Create path: validate the JWT (design only), take the next ID from the Postgres sequence, scramble it, encode it in base 62, save the row, delete the Redis key for that code, return the short URL.
+- Create path: validate the JWT, take the next ID from the Postgres sequence, scramble it, encode it in base 62, save the row, delete the Redis key for that code, return the short URL.
 - Availability: two data centers, each with the same setup, behind one load balancer. Each data center has its own ID range, so codes never collide.
 
 Key decisions are explained in [decisions.md](decisions.md).
@@ -33,13 +33,13 @@ Key decisions are explained in [decisions.md](decisions.md).
 | Deactivate links | Implemented: `DELETE /api/links/{code}`, Postgres first, then the Redis key |
 | List my links | Design only |
 | Click statistics through Kafka (D-04) | Implemented: each successful redirect sends a click event, and a consumer counts clicks per code per day in Postgres. `GET /api/links/{code}/stats` shows the total and the clicks per day |
-| JWT validation, ownership checks | Design only (D-05); links are owned by a placeholder `anonymous` |
+| Login and ownership (D-05) | Implemented: login through Auth0 (OIDC, authorization code + PKCE) in Swagger UI; the API checks the token and only the owner can deactivate a link or see its stats |
 | Two data centers, replicas, load balancer | Design only |
 
 ## Tech stack
 
 - Language and version: Java 21
-- Framework: Spring Boot 4.1 (Web MVC, Validation, Data JPA with Flyway, Data Redis, Actuator). Spring Kafka, springdoc (OpenAPI spec and Swagger UI). Design only: Spring Security OAuth2 resource server
+- Framework: Spring Boot 4.1 (Web MVC, Validation, Data JPA with Flyway, Data Redis, Actuator). Spring Kafka, springdoc (OpenAPI spec and Swagger UI). Spring Security (OAuth2 resource server)
 - Database: PostgreSQL
 - Cache: Redis
 - Messaging: Kafka
@@ -60,21 +60,30 @@ docker compose up -d
 
 # 3. Start the app. SHORT_CODE_K is the secret multiplier for the code shuffle
 #    (odd, not a multiple of 31, below 62^7). The app refuses to start without it.
-SHORT_CODE_K=<your-secret-k> ./mvnw spring-boot:run
+#    JWT_ISSUER and JWT_JWK_SET_URI point to the Auth0 tenant that issues the tokens.
+SHORT_CODE_K=<your-secret-k> \
+JWT_ISSUER=https://lamnguyenned.eu.auth0.com/ \
+JWT_JWK_SET_URI=https://lamnguyenned.eu.auth0.com/.well-known/jwks.json \
+./mvnw spring-boot:run
 
-# 4. Try it (no token needed yet: authentication is design only)
-curl -X POST http://localhost:8080/api/links \
-  -H "Content-Type: application/json" \
-  -d '{ "url": "https://example.com/some/long/path" }'
+# 4. Log in: open http://localhost:8080/swagger-ui/index.html, click "Authorize" and sign in.
+#    Then create a link, see its stats and deactivate it from Swagger.
 
+# 5. Follow a short link (public, no login). Use curl or the address bar:
+#    Swagger's "Try it out" cannot show a redirect to another site (CORS).
 curl -i http://localhost:8080/<code>
-
-# 5. See the click statistics (the consumer adds clicks a moment after each redirect)
-curl http://localhost:8080/api/links/<code>/stats
-
-# 6. Deactivate the link: the next redirect returns 404
-curl -i -X DELETE http://localhost:8080/api/links/<code>
 ```
+
+Settings for login (defaults in `application.yml`):
+
+| Variable | Meaning | Default |
+|---|---|---|
+| `JWT_ISSUER` | who issues the tokens (`iss`) | placeholder, must be set |
+| `JWT_JWK_SET_URI` | where the issuer's public keys are | placeholder, must be set |
+| `JWT_AUDIENCE` | the API the token must be for (`aud`) | `url-shortener` |
+| `AUTH0_CLIENT_ID` | the Swagger UI login client (public, not a secret) | the client ID of my Auth0 application |
+
+Login uses my Auth0 tenant. Test users can be shared on request; passwords are never in the repository.
 
 The API can also be tried in the browser with Swagger UI at http://localhost:8080/swagger-ui/index.html (OpenAPI spec at `/v3/api-docs`). Set `SWAGGER_ENABLED=false` to turn both off where the API docs should not be public. The redirect itself is easiest to see with `curl -i`, because a browser follows it.
 
@@ -90,11 +99,11 @@ Stop with `docker compose down` (add `-v` to remove data).
 | DELETE | /api/links/{code} | Deactivate my link (soft delete). 204 also if it was already inactive | 204 | 401, 403 not the owner, 404 "Code not found" |
 | GET | /api/links/{code}/stats | Click statistics for my link: total and clicks per day | 200 | 401, 403, 404 "Code not found" (also for a deactivated link) |
 
-Authentication (design only, D-05): Bearer access token (JWT) from an OIDC provider. The `/{code}` redirect needs no token. Today create, redirect, deactivate and stats are implemented without authentication, so 401 and 403 are never returned yet, and anyone who knows a code can deactivate it or see its statistics. Listing is design only.
+Authentication (D-05): every `/api` call needs a Bearer access token (JWT) from Auth0; without a valid token the answer is 401. The `/{code}` redirect needs no token. A link belongs to the user who created it (the token's `sub`); someone else gets 403 on deactivate and stats. Listing is design only.
 
 ## Data model
 
-- `links` (implemented, `V1__create_links.sql`): id (from the counter), code (unique index), long_url, owner_sub (the token's `sub`; `anonymous` until authentication exists), active, created_at.
+- `links` (implemented, `V1__create_links.sql`): id (from the counter), code (unique index), long_url, owner_sub (the token's `sub`), active, created_at.
 - `click_stats` (implemented, `V2__create_click_stats.sql`): code, day, num_clicks, with primary key (code, day). One row per link per day; the day is the UTC date of the event's `clickedAt`.
 - `processed_events` (implemented, `V2`): event_id (primary key), processed_at. Used to ignore duplicate click events; an hourly job deletes rows older than 1 day.
 
@@ -131,7 +140,8 @@ What exists:
 - Unit and web-layer tests for the cache, redirect, create, deactivate, stats and configuration (mocked Postgres and Redis).
 - `contextLoads` against real Postgres and Redis containers: proves Flyway and Hibernate `validate` agree.
 - Click statistics: the Kafka sender with a mocked Kafka (right key, never fails a redirect); the counting and the cleanup against a real Postgres (same-day totals, redelivered events counted once, UTC day boundaries, old event IDs deleted), and the stats query against a real Postgres (total, days in order, deactivated links hidden).
-- Manual end-to-end runs with Docker Compose: Redis stopped and Redis hanging; Kafka stopped; Postgres stopped while clicks were being counted.
+- Login and ownership: tokens signed by a test key are accepted or rejected (expired, wrong issuer, wrong audience, wrong algorithm, unsigned, unknown key); the audience check on its own; 401 without a token, 403 for someone else's link, 404 for an unknown code.
+- Manual end-to-end runs with Docker Compose: Redis stopped and Redis hanging; Kafka stopped; Postgres stopped while clicks were being counted; login through Swagger UI with Auth0.
 
 Not covered yet: automated end-to-end tests with a real Kafka, and a Postgres outage longer than the 30-second connection wait (where the consumer's retry takes over). A CI pipeline (build and tests on every push) is a next step.
 
