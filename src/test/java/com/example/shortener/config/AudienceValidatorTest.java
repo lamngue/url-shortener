@@ -36,7 +36,7 @@ class AudienceValidatorTest {
 
     @Test
     void testNoAudienceClaim() {
-        Jwt jwt = Jwt.withTokenValue("token").header("alg", "RS256").build();
+        Jwt jwt = Jwt.withTokenValue("token").header("alg", "RS256").subject("alice").build();
         assertTrue(validator.validate(jwt).hasErrors(), "Expected audience to be invalid");
     }
 
@@ -49,11 +49,4 @@ class AudienceValidatorTest {
         assertTrue(validator.validate(jwt).hasErrors(), "Expected audience to be fully matched, not partially matched");
     }
 
-    @Test 
-    void testExpectedJwtException() {
-        String jwt = TestJwts.rs256(c -> c.audience("other-api"));
-        JwtException exception = new JwtException(jwt);
-        assertTrue(exception.getMessage().contains("Invalid audience"), "Expected exception message to indicate invalid audience");
-        
-    }
 }

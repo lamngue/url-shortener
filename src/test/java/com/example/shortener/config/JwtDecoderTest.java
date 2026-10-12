@@ -56,6 +56,13 @@ class JwtDecoderTest {
     }
 
     @Test
+    void tokenForAnotherAudienceIsRejected() {
+        String token = TestJwts.rs256(claims -> claims.audience("other-api"));
+
+        assertThatThrownBy(() -> decoder.decode(token)).isInstanceOf(JwtException.class);
+    }
+
+    @Test
     void unsignedTokenIsRejected() {
         String token = TestJwts.unsigned(claims -> { });
 

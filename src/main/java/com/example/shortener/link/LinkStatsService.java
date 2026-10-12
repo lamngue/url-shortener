@@ -36,7 +36,7 @@ public class LinkStatsService {
         this.jdbc = jdbc;
     }
 
-    /** Empty for an invalid, unknown or deactivated code (the caller answers 404). */
+    /** Empty for an invalid, unknown or deactivated code (the caller answers 404), not an owner (403) */
     public OwnerCheckResult stats(String code, String callerSub) {
         if (!ShortCodeGenerator.isValidCode(code)) {
             return new NotFound();
@@ -45,12 +45,12 @@ public class LinkStatsService {
         if (found.isEmpty()) {
             return new NotFound();
         }
-        boolean ownerSub = found.filter(link -> link.getOwnerSub().equals(callerSub)).isPresent();
+        boolean isOwner = found.filter(link -> link.getOwnerSub().equals(callerSub)).isPresent();
         // ownership check
-        if (!ownerSub) {
+        if (!isOwner) {
             return new NotOwner();
         }
-        boolean active = repository.findByCode(code).map(Link::isActive).orElse(false);
+        boolean active = found.get().isActive();
         if (!active) {
             return new NotFound();
         }
