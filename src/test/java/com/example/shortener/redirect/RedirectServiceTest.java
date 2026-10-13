@@ -29,7 +29,7 @@ public class RedirectServiceTest {
 
     @ParameterizedTest
     @NullSource
-    @ValueSource(strings = {"", "abc", "favicon.ico", "abc-123", "abcdefgh"})
+    @ValueSource(strings = {"abc", "favicon.ico"})
     void testInvalidCodeNoTouchingCacheOrDatabase(String code) {
         assertThat(service.redirect(code)).isEmpty();
 

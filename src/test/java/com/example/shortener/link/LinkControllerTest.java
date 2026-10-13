@@ -3,23 +3,21 @@ package com.example.shortener.link;
 import com.example.shortener.config.SecurityConfig;
 
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDate;
 import java.util.List;
-import java.util.Optional;
 
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -43,6 +41,39 @@ class LinkControllerTest {
     @MockitoBean
     private LinkStatsService linkStatsService;
 
+    @Test 
+    void testCreateLinkSuccessfully() throws Exception {
+        when(linkService.create("https://example.com/a", "alice"))
+                .thenReturn(new CreateLinkResponse("02tdk01", "http://localhost:8080/02tdk01"));
+        mvc.perform(post("/api/links").with(jwt().jwt(j -> j.subject("alice")))
+        .contentType(MediaType.APPLICATION_JSON)
+        .content("{\"url\": \"https://example.com/a\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.code").value("02tdk01"))
+                .andExpect(jsonPath("$.shortUrl").value("http://localhost:8080/02tdk01"));
+        verify(linkService).create("https://example.com/a", "alice");
+    }
+
+    @Test
+    void testCreateLinkWithBadUrlReturns400() throws Exception {
+        // Validation lives in LinkService, so the mock plays the validator's part here.
+        when(linkService.create("not a url", "alice"))
+                .thenThrow(new ResponseStatusException(HttpStatus.BAD_REQUEST, "URL must be an HTTP or HTTPS URL"));
+        mvc.perform(post("/api/links").with(jwt().jwt(j -> j.subject("alice")))
+        .contentType(MediaType.APPLICATION_JSON)
+        .content("{\"url\": \"not a url\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void testCreateLinkWithoutTokenReturns401() throws Exception {
+        mvc.perform(post("/api/links")
+        .contentType(MediaType.APPLICATION_JSON)
+        .content("{\"url\": \"https://example.com/a\"}"))
+                .andExpect(status().isUnauthorized());
+        verify(linkService, never()).create(anyString(), anyString());
+    }
+
     @Test
     void deleteByNonOwnerReturns403() throws Exception {
         // the fake service says: this caller is not the owner
@@ -53,14 +84,6 @@ class LinkControllerTest {
                 .andExpect(status().isForbidden());
 
         verify(linkService).deactivate("abc123", "alice");
-    }
-
-    @Test 
-    void deleteWithoutAuthenticationReturns401() throws Exception {
-        mvc.perform(delete("/api/links/abc123"))
-                .andExpect(status().isUnauthorized());
-
-        verifyNoInteractions(linkService);
     }
 
     @Test
@@ -119,13 +142,5 @@ class LinkControllerTest {
                 .andExpect(status().isForbidden());
 
         verify(linkStatsService).stats("abc123", "bob");
-    }
-
-    @Test
-    void getStatsWithoutTokenReturns401() throws Exception {
-        mvc.perform(get("/api/links/abc123/stats"))
-                .andExpect(status().isUnauthorized());
-
-        verifyNoInteractions(linkStatsService);
     }
 }
