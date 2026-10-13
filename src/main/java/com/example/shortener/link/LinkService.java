@@ -49,9 +49,9 @@ public class LinkService {
         long id = idSource.nextId();
         String code = generator.generate(id);
         repository.save(new Link(id, code, longUrl, callerSub));
-        // After the save, like D-03: someone may have probed this code before it existed, leaving
+        // After the save, like D-03: someone may have explored this code before it existed, leaving
         // a NOT_FOUND entry. LinkCache ignores Redis errors, so this cannot fail the create.
-        cache.evict(code);
+        cache.invalidate(code);
         return new CreateLinkResponse(code, baseUrl + "/" + code);
     }
 
@@ -83,7 +83,7 @@ public class LinkService {
         // update can still put it back; the cache TTL limits how long that lasts. Evicting even
         // when the link was already inactive also clears a stale entry left by an earlier failed
         // evict.
-        cache.evict(code);
+        cache.invalidate(code);
         return new Owner();
     }
 

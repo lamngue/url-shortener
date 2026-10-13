@@ -74,7 +74,7 @@ class LinkServiceTest {
         assertFalse(link.isActive());
         InOrder order = inOrder(repository, cache);
         order.verify(repository).save(link);
-        order.verify(cache).evict("02tdk01");
+        order.verify(cache).invalidate("02tdk01");
     }
 
     @Test
@@ -90,7 +90,7 @@ class LinkServiceTest {
         assertInstanceOf(LinkService.NotOwner.class, result);
         assertTrue(link.isActive());
         verify(repository, never()).save(any(Link.class));
-        verify(cache, never()).evict(anyString());
+        verify(cache, never()).invalidate(anyString());
     }
 
     @Test 
@@ -104,7 +104,7 @@ class LinkServiceTest {
         // check: the right result, nothing saved or evicted
         assertInstanceOf(LinkService.NotFound.class, result);
         verify(repository, never()).save(any(Link.class));
-        verify(cache, never()).evict(anyString());
+        verify(cache, never()).invalidate(anyString());
     }
 
     // helper so each test doesn't repeat the constructor

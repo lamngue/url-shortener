@@ -39,7 +39,7 @@ class RedirectServiceTest {
 
     @Test
     void cacheHitReturnsUrlWithoutTheDatabase() {
-        when(cache.lookup(CODE)).thenReturn(new LinkCache.Hit(URL));
+        when(cache.get(CODE)).thenReturn(new LinkCache.Hit(URL));
 
         assertThat(service.resolve(CODE)).contains(URL);
         verifyNoInteractions(repository);
@@ -48,7 +48,7 @@ class RedirectServiceTest {
 
     @Test
     void cachedNotFoundReturnsEmptyWithoutTheDatabase() {
-        when(cache.lookup(CODE)).thenReturn(new LinkCache.KnownNotFound());
+        when(cache.get(CODE)).thenReturn(new LinkCache.KnownNotFound());
 
         assertThat(service.resolve(CODE)).isEmpty();
         verifyNoInteractions(repository);
@@ -57,7 +57,7 @@ class RedirectServiceTest {
 
     @Test
     void missWithActiveLinkReturnsUrlAndCachesIt() {
-        when(cache.lookup(CODE)).thenReturn(new LinkCache.Miss());
+        when(cache.get(CODE)).thenReturn(new LinkCache.Miss());
         when(repository.findByCode(CODE)).thenReturn(Optional.of(new Link(1L, CODE, URL, "anonymous")));
 
         assertThat(service.resolve(CODE)).contains(URL);
@@ -67,7 +67,7 @@ class RedirectServiceTest {
 
     @Test
     void missWithUnknownCodeCachesNotFound() {
-        when(cache.lookup(CODE)).thenReturn(new LinkCache.Miss());
+        when(cache.get(CODE)).thenReturn(new LinkCache.Miss());
         when(repository.findByCode(CODE)).thenReturn(Optional.empty());
 
         assertThat(service.resolve(CODE)).isEmpty();
@@ -79,7 +79,7 @@ class RedirectServiceTest {
     void missWithDeactivatedLinkCachesNotFound() {
         Link deactivated = mock(Link.class);
         when(deactivated.isActive()).thenReturn(false);
-        when(cache.lookup(CODE)).thenReturn(new LinkCache.Miss());
+        when(cache.get(CODE)).thenReturn(new LinkCache.Miss());
         when(repository.findByCode(CODE)).thenReturn(Optional.of(deactivated));
 
         assertThat(service.resolve(CODE)).isEmpty();
