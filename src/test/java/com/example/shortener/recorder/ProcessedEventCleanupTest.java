@@ -6,12 +6,12 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 import java.sql.Timestamp;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
-
-import static org.assertj.core.api.Assertions.assertThat;
 
 /** The cleanup SQL against a real Postgres (Testcontainers). */
 @IntegrationTest
@@ -23,16 +23,17 @@ class ProcessedEventCleanupTest {
     @Autowired
     private JdbcTemplate jdbc;
 
+    // P1: an event ID processed 2 days ago is deleted; one processed 1 hour ago is kept.
     @Test
-    void deletesOnlyEventIdsOlderThanTheCutoff() {
-        Instant now = Instant.now();
-        UUID old = insertProcessedAt(now.minus(Duration.ofDays(2)));
-        UUID recent = insertProcessedAt(now.minus(Duration.ofHours(1)));
+    void deletesOnlyEventIdsOlderThanOneDay() {
+        UUID oldId = insertProcessedAt(Instant.now().minusSeconds(2 * 24 * 60 * 60)); // 2 days ago
+        UUID recentId = insertProcessedAt(Instant.now().minusSeconds(60 * 60)); // 1 hour ago
 
-        cleanup.deleteOlderThan(now.minus(ProcessedEventCleanup.KEEP));
+        cleanup.deleteOldEventIds();
 
-        assertThat(exists(old)).isFalse();
-        assertThat(exists(recent)).isTrue();
+        assertFalse(exists(oldId));
+        assertTrue(exists(recentId));
+
     }
 
     private UUID insertProcessedAt(Instant processedAt) {
