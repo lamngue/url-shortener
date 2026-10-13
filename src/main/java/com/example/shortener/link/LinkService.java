@@ -5,16 +5,15 @@ import com.example.shortener.config.ShortenerProperties;
 import com.example.shortener.shortcode.IdSource;
 import com.example.shortener.shortcode.ShortCodeGenerator;
 
-import org.springframework.security.oauth2.jwt.Jwt;
+
 import org.springframework.stereotype.Service;
+import java.net.URI;
 
 import java.util.Optional;
 
+
 @Service
 public class LinkService {
-
-    // Placeholder owner until authentication exists; then this becomes the token's `sub`.
-    static final String ANONYMOUS_OWNER = "anonymous";
 
     public sealed interface OwnerCheckResult permits Owner, NotOwner, NotFound {
     }
@@ -33,23 +32,24 @@ public class LinkService {
     private final LinkRepository repository;
     private final LinkCache cache;
     private final String baseUrl;
+    private final HttpUrlValidator urlValidator;
 
     public LinkService(IdSource idSource, ShortCodeGenerator generator, LinkRepository repository,
-                       LinkCache cache, ShortenerProperties properties) {
+                       LinkCache cache, ShortenerProperties properties, HttpUrlValidator urlValidator) {
         this.idSource = idSource;
         this.generator = generator;
         this.repository = repository;
         this.cache = cache;
         this.baseUrl = stripTrailingSlash(properties.baseUrl());
+        this.urlValidator = urlValidator;
     }
 
-    // No @Transactional: the only write is one save(), which is already atomic. If it fails,
-    // the id is simply lost (sequences never roll back), and gaps cost nothing.
-    public CreateLinkResponse create(String callerSub, String longUrl) {
+    public CreateLinkResponse create(String url, String callerSub) {
+        URI validatedUrl = urlValidator.validate(url);
         long id = idSource.nextId();
         String code = generator.generate(id);
-        repository.save(new Link(id, code, longUrl, callerSub));
-        // After the save, like D-03: someone may have explored this code before it existed, leaving
+        repository.save(new Link(id, code, validatedUrl.toString(), callerSub));
+        // After the save, like D-03: someone may have requested this code before it existed, leaving
         // a NOT_FOUND entry. LinkCache ignores Redis errors, so this cannot fail the create.
         cache.invalidate(code);
         return new CreateLinkResponse(code, baseUrl + "/" + code);
@@ -91,4 +91,6 @@ public class LinkService {
     private static String stripTrailingSlash(String url) {
         return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
     }
+
+
 }

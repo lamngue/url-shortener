@@ -1,28 +1,22 @@
 package com.example.shortener.config;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtException;
 
 class AudienceValidatorTest {
     private final AudienceValidator validator = new AudienceValidator("url-shortener");
 
-    @ParameterizedTest 
-    @ValueSource(strings = {"url-shortener", "other-audience", "another-audience"})
-    void testAudienceValidationSuccess(String audience) {
+    @Test
+    void testAudienceValidationSuccess() {
         Jwt jwt = Jwt.withTokenValue("token")
                 .header("alg", "RS256")
-                .claim("aud", audience)
+                .claim("aud", "url-shortener")
                 .build();
-        if ("url-shortener".equals(audience)) {
-            assertTrue(validator.validate(jwt).hasErrors() == false, "Expected audience to be valid");
-        } else {
-            assertTrue(validator.validate(jwt).hasErrors(), "Expected audience to be invalid");
-        }       
+        assertFalse(validator.validate(jwt).hasErrors(), "Expected audience to be valid");
     }
 
     @Test

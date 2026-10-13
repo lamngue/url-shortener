@@ -1,8 +1,8 @@
 package com.example.shortener.link;
 
-import jakarta.validation.Valid;
-
 import java.util.Optional;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -10,8 +10,6 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
@@ -31,9 +29,9 @@ public class LinkController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public CreateLinkResponse create(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody CreateLinkRequest request) {
+    public CreateLinkResponse create(@AuthenticationPrincipal Jwt jwt, @RequestBody CreateLinkRequest request) {
         String callerSub = jwt.getSubject();
-        return linkService.create(callerSub, request.url());
+        return linkService.create(request.url(), callerSub);
     }
 
     // 204 also when the link was already deactivated: the caller wanted it inactive, and it is.
