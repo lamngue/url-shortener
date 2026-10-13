@@ -51,6 +51,18 @@ class ClickEventConsumerTest {
         assertEquals(1, clicks(code, day));
     }
 
+    @Test
+    void clicksOnDifferentDaysAreCountedSeparately() {
+        String code = uniqueCode();
+        consumer.onClick(new ClickEvent(UUID.randomUUID(), code, NOON));
+        Instant nextDayNoon = NOON.plusSeconds(24 * 60 * 60);
+        consumer.onClick(new ClickEvent(UUID.randomUUID(), code, nextDayNoon));
+        LocalDate day1 = LocalDate.ofInstant(NOON, ZoneOffset.UTC);
+        LocalDate day2 = LocalDate.ofInstant(nextDayNoon, ZoneOffset.UTC);
+        assertEquals(1, clicks(code, day1));
+        assertEquals(1, clicks(code, day2));
+    }
+
     // Reads the count for one link on one day; 0 if there is no row yet.
     private long clicks(String code, LocalDate day) {
         Long n = jdbc.query("SELECT num_clicks FROM click_stats WHERE code = ? AND day = ?",
