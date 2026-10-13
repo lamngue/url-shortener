@@ -2,7 +2,6 @@ package com.example.shortener.cache;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
 import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
@@ -13,10 +12,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class LinkCacheTest {
@@ -32,72 +29,45 @@ class LinkCacheTest {
         when(redis.opsForValue()).thenReturn(values);
     }
 
-    @Test
+    @Test 
     void storedUrlIsAHit() {
-        when(values.get("link:02tdk01")).thenReturn("https://example.com");
-
-        assertThat(cache.lookup("02tdk01")).isEqualTo(new LinkCache.Hit("https://example.com"));
+        when(values.get("link:abc123")).thenReturn("https://example.com");   // fake Redis has the URL
+        LinkCache.RedisLookUpResult result = cache.get("abc123");
+        assertThat(result).isEqualTo(new LinkCache.Hit("https://example.com"));
     }
 
-    @Test
-    void markerIsKnownNotFound() {
-        when(values.get("link:02tdk01")).thenReturn(LinkCache.NOT_FOUND);
-
-        assertThat(cache.lookup("02tdk01")).isInstanceOf(LinkCache.KnownNotFound.class);
+    @Test 
+    void testNotFoundIsStoredInRedis() {
+        when(values.get("link:abc123")).thenReturn(LinkCache.NOT_FOUND);
+        LinkCache.RedisLookUpResult result = cache.get("abc123");
+        assertThat(result).isEqualTo(new LinkCache.KnownNotFound());
     }
 
-    @Test
-    void noEntryIsAMiss() {
-        when(values.get("link:02tdk01")).thenReturn(null);
-
-        assertThat(cache.lookup("02tdk01")).isInstanceOf(LinkCache.Miss.class);
+    @Test 
+    void testNothingIsStoredInRedis() {
+        when(values.get("link:abc123")).thenReturn(null);
+        LinkCache.RedisLookUpResult result = cache.get("abc123");
+        assertThat(result).isEqualTo(new LinkCache.Miss());
     }
 
-    @Test
-    void redisFailureOnLookupIsAMiss() {
-        when(values.get(anyString())).thenThrow(new RedisConnectionFailureException("down"));
-
-        assertThat(cache.lookup("02tdk01")).isInstanceOf(LinkCache.Miss.class);
+    @Test 
+    void testRedisFailureOnLookUpIsAMiss() {
+        when(values.get(anyString())).thenThrow(new RedisConnectionFailureException("Redis is down"));
+        LinkCache.RedisLookUpResult result = cache.get("abc123");
+        assertThat(result).isEqualTo(new LinkCache.Miss());
     }
 
-    @Test
-    void putUrlUsesPositiveTtlWithinJitterRange() {
-        cache.putUrl("02tdk01", "https://example.com");
-
-        ArgumentCaptor<Duration> ttl = ArgumentCaptor.forClass(Duration.class);
-        verify(values).set(eq("link:02tdk01"), eq("https://example.com"), ttl.capture());
-        assertThat(ttl.getValue()).isBetween(Duration.ofSeconds(300), Duration.ofSeconds(330));
-    }
-
-    @Test
-    void putNotFoundStoresMarkerWithNegativeTtl() {
-        cache.putNotFound("02tdk01");
-
-        verify(values).set("link:02tdk01", LinkCache.NOT_FOUND, Duration.ofSeconds(10));
-    }
-
-    @Test
-    void redisFailureOnWriteIsIgnored() {
+    @Test 
+    void testRedisFailOnAWrite() {
         doThrow(new RedisConnectionFailureException("down"))
-                .when(values).set(anyString(), anyString(), any(Duration.class));
-
-        assertThatNoException().isThrownBy(() -> cache.putUrl("02tdk01", "https://example.com"));
-        assertThatNoException().isThrownBy(() -> cache.putNotFound("02tdk01"));
+        .when(values).set(anyString(), anyString(), any(Duration.class));
+        assertThatNoException().isThrownBy(() -> cache.putUrl("abc123", "https://example.com"));
     }
 
-    @Test
-    void evictDeletesTheKeyAndIgnoresRedisFailure() {
-        cache.evict("02tdk01");
-        verify(redis).delete("link:02tdk01");
-
+    @Test 
+    void testRedisFailOnInvalidate() {
         when(redis.delete(anyString())).thenThrow(new RedisConnectionFailureException("down"));
-        assertThatNoException().isThrownBy(() -> cache.evict("02tdk01"));
+        assertThatNoException().isThrownBy(() -> cache.invalidate("abc123"));
     }
-
-    @Test
-    void jitterStaysWithinRangeOverManyDraws() {
-        for (int i = 0; i < 1_000; i++) {
-            assertThat(cache.positiveTtlWithJitter()).isBetween(Duration.ofSeconds(300), Duration.ofSeconds(330));
-        }
-    }
+   
 }

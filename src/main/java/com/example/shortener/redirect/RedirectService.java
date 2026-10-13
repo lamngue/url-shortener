@@ -33,7 +33,7 @@ public class RedirectService {
         if (!ShortCodeGenerator.isValidCode(code)) {
             return Optional.empty();
         }
-        Optional<String> longUrl = switch (cache.lookup(code)) {
+        Optional<String> longUrl = switch (cache.get(code)) {
             case LinkCache.Hit hit -> Optional.of(hit.longUrl());
             case LinkCache.KnownNotFound notFound -> Optional.empty();
             case LinkCache.Miss miss -> loadAndCache(code);

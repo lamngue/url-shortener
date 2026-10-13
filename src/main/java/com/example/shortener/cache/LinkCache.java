@@ -1,98 +1,96 @@
 package com.example.shortener.cache;
 
+import java.time.Duration;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
-import java.time.Duration;
-import java.util.concurrent.ThreadLocalRandom;
-
-/**
- * Redis cache for code -> long URL (cache-aside). Redis is only a performance layer: every
- * Redis failure is treated as a miss or ignored, so it can never fail a request.
- */
 @Component
 public class LinkCache {
-
     private static final Logger log = LoggerFactory.getLogger(LinkCache.class);
 
-    private static final String KEY_PREFIX = "link:";
-    // Stored for unknown or inactive codes. Never a real value: create only accepts http/https URLs.
-    static final String NOT_FOUND = "NOT_FOUND";
+    private static final String LINK_CACHE_PREFIX = "link:";
 
-    /** The three outcomes of a lookup. */
-    public sealed interface Lookup permits Hit, KnownNotFound, Miss {
+
+    static final String NOT_FOUND = "Known not to exist";
+
+    public sealed interface RedisLookUpResult permits Hit, Miss, KnownNotFound {
     }
 
-    /** Redis has the long URL. */
-    public record Hit(String longUrl) implements Lookup {
-    }
+    private final StringRedisTemplate redisTemplate;
 
-    /** Redis remembers that this code has no active link. */
-    public record KnownNotFound() implements Lookup {
-    }
-
-    /** Redis has nothing usable (no entry, or Redis failed): ask Postgres. */
-    public record Miss() implements Lookup {
-    }
-
-    private final StringRedisTemplate redis;
     private final LinkCacheProperties properties;
 
-    public LinkCache(StringRedisTemplate redis, LinkCacheProperties properties) {
-        this.redis = redis;
+    public record Hit(String longUrl) implements RedisLookUpResult {
+    }
+
+    public record Miss() implements RedisLookUpResult {
+    }
+
+    public record KnownNotFound() implements RedisLookUpResult {
+    }
+
+    public LinkCache(StringRedisTemplate redisTemplate, LinkCacheProperties properties) {
+        this.redisTemplate = redisTemplate;
         this.properties = properties;
     }
 
-    public Lookup lookup(String code) {
-        String value;
+    public RedisLookUpResult get(String code) {
         try {
-            value = redis.opsForValue().get(key(code));
+            String value = redisTemplate.opsForValue().get(key(code));
+            if (value == null) {
+                return new Miss();
+            } else if (value.equals(NOT_FOUND)) {
+                return new KnownNotFound();
+            } else {
+                return new Hit(value);
+            }
         } catch (RuntimeException e) {
-            // Logged at DEBUG: while Redis is down this happens on every redirect.
-            log.debug("Redis lookup failed for {}, falling back to the database", code, e);
+            log.debug("Redis read failed for {}", code, e);
             return new Miss();
         }
-        if (value == null) {
-            return new Miss();
-        }
-        return NOT_FOUND.equals(value) ? new KnownNotFound() : new Hit(value);
     }
 
-    public void putUrl(String code, String longUrl) {
-        set(code, longUrl, positiveTtlWithJitter());
+    public void putUrl(String code, String url) {
+        Duration ttl = positiveTtlWithJitter();
+        set(code, url, ttl);
+        log.debug("Cached URL for code: {} with TTL: {}", code, ttl);
     }
 
     public void putNotFound(String code) {
-        set(code, NOT_FOUND, properties.negativeTtl());
+        Duration ttl = properties.negativeTtl();
+        set(code, NOT_FOUND, ttl);
+        log.debug("Cached NOT_FOUND for code: {} with TTL: {}", code, ttl);
     }
 
-    public void evict(String code) {
+    public void invalidate(String code) {
         try {
-            redis.delete(key(code));
+            redisTemplate.delete(key(code));
+            log.debug("Invalidated cache for code: {}", code);
         } catch (RuntimeException e) {
-            // The entry then lives until its TTL expires, which is the bound we accepted.
-            log.debug("Redis evict failed for {}", code, e);
+            log.debug("Redis delete failed for {}", code, e);
         }
     }
 
-    private void set(String code, String value, Duration ttl) {
+     private void set(String code, String value, Duration ttl) {
         try {
-            redis.opsForValue().set(key(code), value, ttl);
+            redisTemplate.opsForValue().set(key(code), value, ttl);
         } catch (RuntimeException e) {
             log.debug("Redis write failed for {}", code, e);
         }
     }
 
-    // positiveTtl plus a random 0..jitter share, so entries created together don't expire together.
-    Duration positiveTtlWithJitter() {
-        long base = properties.positiveTtl().toMillis();
-        double extra = ThreadLocalRandom.current().nextDouble() * properties.jitter();
-        return Duration.ofMillis(base + (long) (base * extra));
+    private String key(String code) {
+        return LINK_CACHE_PREFIX + code;
     }
 
-    private static String key(String code) {
-        return KEY_PREFIX + code;
+    Duration positiveTtlWithJitter() {
+        double jitterFactor = 1.0 + (Math.random() * properties.jitter());
+        return properties.positiveTtl().multipliedBy((long) (jitterFactor * 1000)).dividedBy(1000);
     }
+    
 }
+
+
