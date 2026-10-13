@@ -34,7 +34,8 @@ Key decisions are explained in [decisions.md](decisions.md).
 | List my links | Design only |
 | Click statistics through Kafka (D-04) | Implemented: each successful redirect sends a click event, and a consumer counts clicks per code per day in Postgres. `GET /api/links/{code}/stats` shows the total and the clicks per day |
 | Login and ownership (D-05) | Implemented: login through Auth0 (OIDC, authorization code + PKCE) in Swagger UI; the API checks the token and only the owner can deactivate a link or see its stats |
-| Two data centers, replicas, load balancer | Design only |
+| Two app instances behind a load balancer (nginx) | Implemented, in one data center: stopping one instance keeps every request working |
+| Second data center, Postgres replica, Kafka replication, global load balancer | Design only |
 
 ## Tech stack
 
@@ -44,34 +45,69 @@ Key decisions are explained in [decisions.md](decisions.md).
 - Cache: Redis
 - Messaging: Kafka
 - Build tool: Maven (wrapper included, `./mvnw`)
-- Containers: Docker, Docker Compose
+- Containers: Docker (multi-stage `Dockerfile`), Docker Compose, nginx as the load balancer
 
 ## How to run
 
-Prerequisites: Docker with Docker Compose, and Java 21 (Maven comes with the wrapper). Compose starts Postgres, Redis and Kafka; the app runs on your machine.
+Prerequisites: Docker with Docker Compose. Java is only needed to run the app outside Docker (option B).
+
+### Option A: everything in Docker (two app instances behind nginx)
 
 ```bash
 # 1. Clone
 git clone <repo-url>
 cd <repo-folder>
 
-# 2. Start Postgres, Redis and Kafka
-docker compose up -d
+# 2. Build the app image and start Postgres, Redis, Kafka, app1, app2 and nginx
+docker compose up -d --build
 
-# 3. Start the app. SHORT_CODE_K is the secret multiplier for the code shuffle
-#    (odd, not a multiple of 31, below 62^7). The app refuses to start without it.
-#    JWT_ISSUER and JWT_JWK_SET_URI point to the Auth0 tenant that issues the tokens.
+# 3. Wait until both apps have started (about 30 seconds), then open
+#    http://localhost:8080/swagger-ui/index.html, click "Authorize" and sign in.
+#    Create a link, see its stats and deactivate it from Swagger.
+
+# 4. Follow a short link (public, no login). Use curl or the address bar:
+#    Swagger's "Try it out" cannot show a redirect to another site (CORS).
+curl -i http://localhost:8080/<code>
+```
+
+The app settings for both instances (database, Redis, Kafka, Auth0, `SHORT_CODE_K`) are in `docker-compose.yml`. `SHORT_CODE_K` must be the same on every instance: with two different values, two instances could turn different IDs into the same short code.
+
+### Option B: the app on your machine (for development)
+
+Needs Java 21 (Maven comes with the wrapper).
+
+```bash
+# Start only Postgres, Redis and Kafka
+docker compose up -d postgres redis kafka
+
+# Start the app. SHORT_CODE_K is the secret multiplier for the code shuffle
+# (odd, not a multiple of 31, below 62^7). The app refuses to start without it.
+# JWT_ISSUER and JWT_JWK_SET_URI point to the Auth0 tenant that issues the tokens.
 SHORT_CODE_K=<your-secret-k> \
 JWT_ISSUER=https://lamnguyenned.eu.auth0.com/ \
 JWT_JWK_SET_URI=https://lamnguyenned.eu.auth0.com/.well-known/jwks.json \
 ./mvnw spring-boot:run
+```
 
-# 4. Log in: open http://localhost:8080/swagger-ui/index.html, click "Authorize" and sign in.
-#    Then create a link, see its stats and deactivate it from Swagger.
+Option B uses port 8080 too, so stop option A's apps and nginx first (`docker compose stop app1 app2 nginx`).
 
-# 5. Follow a short link (public, no login). Use curl or the address bar:
-#    Swagger's "Try it out" cannot show a redirect to another site (CORS).
-curl -i http://localhost:8080/<code>
+### See the load balancing and the failover (option A)
+
+nginx adds an `X-Upstream-Addr` header that shows which instance answered.
+
+```bash
+# Both instances take turns
+for i in 1 2 3 4; do curl -s -o /dev/null -D - http://localhost:8080/actuator/health | grep -i x-upstream; done
+
+# Stop one instance: every request still gets 200 from the other one
+docker compose stop app1
+for i in 1 2 3 4; do curl -s -o /dev/null -D - http://localhost:8080/actuator/health | grep -iE "^HTTP|x-upstream"; done
+
+# Kafka gives the stopped instance's click partitions to the other instance
+docker compose logs --since 2m app2 | grep -i "partitions assigned"
+
+# Start it again (wait about 30 seconds before testing)
+docker compose start app1
 ```
 
 Settings for login (defaults in `application.yml`):
@@ -115,6 +151,7 @@ Authentication (D-05): every `/api` call needs a Bearer access token (JWT) from 
 - If Redis is down: reads fall back to Postgres, slower under load. Redis calls time out after 100 ms, and Redis is not part of the health check, so a cache outage does not remove instances from the load balancer.
 - If Kafka is down: redirects still work. The producer waits at most about 100 ms, then drops the click, so some clicks are not counted (measured: redirects took about 107 to 137 ms while Kafka was stopped).
 - If Postgres is down for the consumer: clicks wait in Kafka and are counted when Postgres is back (measured: 4 clicks during a short outage were all counted afterwards).
+- If one app instance stops: nginx retries the request on the other instance, so the caller still gets an answer (measured: all requests 200, the first one tried both instances). Kafka moves the stopped instance's click partitions to the other instance.
 - If the identity provider is down: new sign-ins fail, existing tokens work until they expire. Redirects are unaffected.
 - Link mappings: stored in Postgres with a replica and backups. Redis is only a performance layer.
 - Deactivation: update Postgres first, then delete the Redis entry (measured: the next redirect returns 404 at once). This makes it unlikely that an old value is put back; if it happens, the cache time limit ends it within about 5 minutes.
