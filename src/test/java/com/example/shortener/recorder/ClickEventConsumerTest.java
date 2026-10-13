@@ -61,7 +61,6 @@ class ClickEventConsumerTest {
         consumer.onClick(new ClickEvent(UUID.randomUUID(), code, justAfterMidnight));
         assertEquals(1, clicks(code, LocalDate.parse("2026-10-11")));
         assertEquals(1, clicks(code, LocalDate.parse("2026-10-12")));
-
     }
 
     // Reads the count for one link on one day; 0 if there is no row yet.
