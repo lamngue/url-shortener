@@ -111,6 +111,23 @@ Keep each entry short: a few lines is enough.
 - **Trade-off:** One extra database call per create. Gaps appear when an insert fails, because sequences are not rolled back, which does not matter with 3.5 trillion numbers. Ranges are fixed, so adding a data center needs planning.
 - **Revisit if:** The `nextval` call shows up in metrics (then take blocks from the sequence behind the same interface), or there are more than two data centers.
 
+### D-09: Two app instances behind nginx, in Docker Compose
+- **Date:** 2026-10-13
+- **Context:** The service must survive the loss of an app server, and later of a data center. I wanted to show this running, not only on a slide.
+- **Options considered:** (1) Keep it design only. (2) Kubernetes on my laptop with two simulated data centers. (3) Two app instances behind an nginx load balancer in Docker Compose.
+- **Decision:** Option 3.
+    * **Image:** a multi-stage `Dockerfile` builds the jar and runs it on a small Java runtime, with a 320 MB heap per instance.
+    * **Compose:** `app1` and `app2` get the same settings, including the same `SHORT_CODE_K`. Only nginx is reachable from outside, on port 8080.
+    * **nginx:** sends requests to the instances in turn (round robin), keeps that state shared between its workers (`zone`), passes the original `Host` header on (so the Swagger login callback stays `localhost:8080`), and adds an `X-Upstream-Addr` header that shows which instance answered.
+    * **Kafka:** two listeners, one for the containers (`kafka:29092`) and one for an app started on my machine (`localhost:9092`).
+- **Why:**
+    * It shows the app is stateless: any instance can answer any request, including the login, because the PKCE secret lives in the browser and the token is checked on every call.
+    * It shows failover live: when one instance stops, nginx retries the request on the other, and Kafka moves the click partitions to the remaining instance.
+    * Kubernetes and two data centers do not fit on an 8 GB laptop, and a load balancer across two data centers cannot be simulated on one machine anyway.
+- **Measured:** With app1 stopped, every request still got 200. The first one shows `X-Upstream-Addr: app1, app2`: nginx tried app1, failed, and retried on app2.
+- **Trade-off:** Everything runs on one machine, so this is not a second data center. nginx itself is a single point of failure here. Open-source nginx only notices a dead instance when a request to it fails, then retries; it does not check health on its own.
+- **Revisit if:** This goes to production: use a managed or global load balancer that checks `/actuator/health`, run the instances on Kubernetes or a similar platform, and add the second data center from the design (D-08 ranges, Postgres replica, replicated Kafka).
+
 ---
 
 ## Questions for the team (ask before building if unclear)
@@ -125,7 +142,7 @@ Keep each entry short: a few lines is enough.
 
 ## Things I left out on purpose (scope)
 - Custom aliases, expiry
-- Built: create, redirect with the Redis cache, click statistics through Kafka (D-04), deactivate, the stats endpoint, and login with ownership checks (D-05). Design only: listing links, the load balancer and the second data center. Reason: limited time, and the brief asks for the thinking process rather than a complete solution.
+- Built: create, redirect with the Redis cache, click statistics through Kafka (D-04), deactivate, the stats endpoint, and login with ownership checks (D-05). Built in one data center only: two app instances behind nginx (D-09). Design only: listing links, the second data center and a global load balancer. Reason: limited time, and the brief asks for the thinking process rather than a complete solution.
 
 ## Known limitations and next steps
 -

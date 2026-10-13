@@ -27,16 +27,91 @@ services:
       retries: 10
 
   kafka:
-    # Single Kafka node in KRaft mode (no ZooKeeper). With no extra settings the official image
-    # listens on localhost:9092, which is what the app on your machine connects to.
+    # Single Kafka node in KRaft mode (no ZooKeeper). Setting any KAFKA_* variable replaces the
+    # image's built-in defaults, so the whole node is described here.
     image: apache/kafka:4.3.1
     ports:
       - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      # Two client listeners, because Kafka tells each client which address to use next:
+      #   INTERNAL (kafka:29092)    for other containers, e.g. the app instances in this file
+      #   EXTERNAL (localhost:9092) for an app started on your own machine
+      KAFKA_LISTENERS: INTERNAL://:29092,EXTERNAL://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      # One node, so Kafka's own internal topics can only have one copy.
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null"]
       interval: 10s
       timeout: 10s
       retries: 10
+
+  app1:
+    build: .
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: shortener
+      DB_USER: shortener
+      DB_PASSWORD: shortener
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      SHORT_CODE_K: 2348593437
+      JWT_ISSUER: https://lamnguyenned.eu.auth0.com/
+      JWT_JWK_SET_URI: https://lamnguyenned.eu.auth0.com/.well-known/jwks.json
+      APP_BASE_URL: http://localhost:8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+
+  app2:
+    build: .
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: shortener
+      DB_USER: shortener
+      DB_PASSWORD: shortener
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      SHORT_CODE_K: 2348593437
+      JWT_ISSUER: https://lamnguyenned.eu.auth0.com/
+      JWT_JWK_SET_URI: https://lamnguyenned.eu.auth0.com/.well-known/jwks.json
+      APP_BASE_URL: http://localhost:8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+  
+  nginx:
+    image: nginx:1.25
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      app1:
+        condition: service_started
+      app2:
+        condition: service_started
 
 volumes:
   postgres-data:
