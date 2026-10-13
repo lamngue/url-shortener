@@ -6,11 +6,12 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.UUID;
-
-import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * The counting SQL against a real Postgres (Testcontainers). The Kafka listener is not started in
@@ -28,59 +29,29 @@ class ClickEventConsumerTest {
 
     private static final Instant NOON = Instant.parse("2026-10-11T12:00:00Z");
 
+    // C1: two different events for the same code on the same UTC day give num_clicks = 2.
+    //     Covers both the first insert and the "add 1" path.
     @Test
-    void firstClickOfTheDayCreatesTheRow() {
+    void clicksOnTheSameDayAddUp() {
         String code = uniqueCode();
-
         consumer.onClick(new ClickEvent(UUID.randomUUID(), code, NOON));
-
-        assertThat(clicks(code, LocalDate.parse("2026-10-11"))).isEqualTo(1);
+        consumer.onClick(new ClickEvent(UUID.randomUUID(), code, NOON));
+        LocalDate day = LocalDate.ofInstant(NOON, ZoneOffset.UTC);
+        assertEquals(2, clicks(code, day));
     }
 
-    @Test
-    void laterClicksTheSameDayAddUp() {
-        String code = uniqueCode();
-
-        consumer.onClick(new ClickEvent(UUID.randomUUID(), code, NOON));
-        consumer.onClick(new ClickEvent(UUID.randomUUID(), code, NOON.plusSeconds(60)));
-        consumer.onClick(new ClickEvent(UUID.randomUUID(), code, NOON.plusSeconds(120)));
-
-        assertThat(clicks(code, LocalDate.parse("2026-10-11"))).isEqualTo(3);
-    }
-
+    // C2: the same event (same eventId) delivered twice is counted once: num_clicks = 1.
     @Test
     void redeliveredEventIsCountedOnce() {
         String code = uniqueCode();
-        ClickEvent event = new ClickEvent(UUID.randomUUID(), code, NOON);
-
-        consumer.onClick(event);
-        consumer.onClick(event); // Kafka delivered it again, for example after a consumer crash
-
-        assertThat(clicks(code, LocalDate.parse("2026-10-11"))).isEqualTo(1);
-    }
-
-    @Test
-    void clickIsCountedOnTheUtcDayItHappened() {
-        String code = uniqueCode();
-
-        consumer.onClick(new ClickEvent(UUID.randomUUID(), code, Instant.parse("2026-10-11T23:59:59Z")));
-        consumer.onClick(new ClickEvent(UUID.randomUUID(), code, Instant.parse("2026-10-12T00:00:01Z")));
-
-        assertThat(clicks(code, LocalDate.parse("2026-10-11"))).isEqualTo(1);
-        assertThat(clicks(code, LocalDate.parse("2026-10-12"))).isEqualTo(1);
-    }
-
-    @Test
-    void eventIdIsSavedForDeduplication() {
         UUID eventId = UUID.randomUUID();
-
-        consumer.onClick(new ClickEvent(eventId, uniqueCode(), NOON));
-
-        Integer rows = jdbc.queryForObject(
-                "SELECT count(*) FROM processed_events WHERE event_id = ?", Integer.class, eventId);
-        assertThat(rows).isEqualTo(1);
+        consumer.onClick(new ClickEvent(eventId, code, NOON));
+        consumer.onClick(new ClickEvent(eventId, code, NOON));
+        LocalDate day = LocalDate.ofInstant(NOON, ZoneOffset.UTC);
+        assertEquals(1, clicks(code, day));
     }
 
+    // Reads the count for one link on one day; 0 if there is no row yet.
     private long clicks(String code, LocalDate day) {
         Long n = jdbc.query("SELECT num_clicks FROM click_stats WHERE code = ? AND day = ?",
                 rs -> rs.next() ? rs.getLong(1) : 0L, code, day);

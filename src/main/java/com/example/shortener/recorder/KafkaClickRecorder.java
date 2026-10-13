@@ -1,12 +1,12 @@
 package com.example.shortener.recorder;
 
+import java.util.UUID;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import java.time.Instant;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
-
-import java.time.Instant;
-import java.util.UUID;
 
 /**
  * Sends each click to Kafka without waiting for the result (D-04). If Kafka cannot take the
@@ -24,20 +24,17 @@ public class KafkaClickRecorder implements ClickRecorder {
     }
 
     @Override
-    public void record(String code) {
+    public void record(String code)  {
         ClickEvent event = new ClickEvent(UUID.randomUUID(), code, Instant.now());
         try {
-            // send() returns at once; the result arrives later. We never wait for it.
-            kafka.send(ClickTopicConfig.TOPIC, code, event)
-                    .whenComplete((result, error) -> {
-                        if (error != null) {
-                            log.debug("Click for {} was not delivered to Kafka", code, error);
-                        }
-                    });
+            kafka.send(ClickTopicConfig.TOPIC, code, event).whenComplete((res, err) -> {
+                if (err != null) {
+                    log.debug("Click for {} code was not delivered to Kafka", code, err);
+                }
+            });
         } catch (RuntimeException e) {
-            // Thrown here when Kafka is unreachable for longer than max.block.ms.
-            // Logged at DEBUG: while Kafka is down this happens on every redirect.
-            log.debug("Click for {} dropped, Kafka unavailable", code, e);
+            log.debug("Click for {} dropped, Kafka unavailable", code, e);        
         }
     }
+
 }
