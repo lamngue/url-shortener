@@ -176,7 +176,7 @@ What exists:
 - Unit tests for the code generator (base 62, shuffle, boundaries, uniqueness, K validation, code format).
 - Unit and web-layer tests for the cache, redirect, create, deactivate, stats and configuration (mocked Postgres and Redis).
 - `contextLoads` against real Postgres and Redis containers: proves Flyway and Hibernate `validate` agree.
-- Click statistics: the Kafka sender with a mocked Kafka (right key, never fails a redirect); the counting and the cleanup against a real Postgres (same-day totals, redelivered events counted once, UTC day boundaries, old event IDs deleted), and the stats query against a real Postgres (total, days in order, deactivated links hidden).
+- Click statistics: the Kafka sender with a mocked Kafka (right key, never fails a redirect); the counting and the cleanup against a real Postgres (same-day totals, redelivered events counted once, old event IDs deleted), and the stats query against a real Postgres (total, days in order, deactivated links hidden).
 - Login and ownership: tokens signed by a test key are accepted or rejected (expired, wrong issuer, wrong audience, wrong algorithm, unsigned, unknown key); the audience check on its own; 401 without a token, 403 for someone else's link, 404 for an unknown code.
 - Manual end-to-end runs with Docker Compose: Redis stopped and Redis hanging; Kafka stopped; Postgres stopped while clicks were being counted; login through Swagger UI with Auth0.
 
@@ -192,7 +192,22 @@ Not covered yet: automated end-to-end tests with a real Kafka, and a Postgres ou
 
 ## Use of AI tools
 
-AI tools were used for: Write Java/Spring code, built in small steps from my designs, README and decision-log draft I reviewed, fact checks (Boot 4, Postgres 18, Testcontainers).
-I did: wrote the code generator and its tests; removed the AI's block allocator code because I couldn't explain it; chose the shuffle's threat model; chose feature packages, 404 for unknown and deactivated, idempotent 204, clicks only on 302.
+I used Claude (Claude Code) as a pair programmer, in two phases.
 
-All design decisions and the code were reviewed and are understood by me.
+**Phase 1: first version.** Claude wrote most of the Java/Spring code in small steps from my designs, and I reviewed each step. I wrote the short code generator and its tests myself. I removed Claude's block allocator because I could not explain it well enough to defend it.
+
+**Phase 2: rewrite.** I did not want code in the repository that I had only reviewed. So I rewrote every component from scratch, each on its own branch: the Redis cache, the redirect, link creation with URL validation, and the Kafka click pipeline (sender, consumer, cleanup). Before each one, I explained my approach and Claude asked questions about it: which value is the Kafka key, why the consumer needs one transaction, what happens on a retry. Claude then set up empty classes and test outlines, and reviewed what I wrote. Those reviews caught real bugs, for example a missing `@Component`, a checked exception that Mockito rejects, and a test that did not check the Kafka key. I also cut the test suite from 99 to 77 tests, keeping one test per behaviour.
+
+**What Claude wrote and I reviewed:** setup code (security and JWT configuration, Flyway migrations, Kafka topic and error handler settings, `application.yml`), first drafts of this README and `decisions.md`, and fact checks (Spring Boot 4, Postgres 18, Testcontainers, Auth0).
+
+**What I decided:**
+- the shuffle's threat model;
+- feature packages;
+- 404 for both unknown and deactivated links;
+- an idempotent 204 on deactivate;
+- counting clicks only on a 302;
+- validating URLs in the service, not in the controller;
+- Auth0 for login;
+- two instances behind nginx, with the replicas left as design only.
+
+I can explain every design decision and every line of the code.
