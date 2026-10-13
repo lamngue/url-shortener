@@ -32,7 +32,7 @@ public class LinkController {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public CreateLinkResponse create(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody CreateLinkRequest request) {
-        String callerSub  = jwt.getSubject();
+        String callerSub = jwt.getSubject();
         return linkService.create(callerSub, request.url());
     }
 
@@ -40,7 +40,7 @@ public class LinkController {
     @DeleteMapping("/{code}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deactivate(@AuthenticationPrincipal Jwt jwt, @PathVariable String code) {
-        String callerSub  = jwt.getSubject();
+        String callerSub = jwt.getSubject();
         switch (linkService.deactivate(code, callerSub)) {
             case LinkService.Owner owner -> { }                       // 204: nothing to do
             case LinkService.NotOwner notOwner -> throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Not the owner of this link");
