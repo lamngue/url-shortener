@@ -34,6 +34,9 @@ spring:
       value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer
       properties:
         spring.json.add.type.headers: false
+        # The redirect must not wait for Kafka: give up after 100 ms and drop the click (D-04).
+        # Kafka's default would block the request thread for up to 60 seconds.
+        max.block.ms: 100
     consumer:
       group-id: click-stats
       # A new consumer group starts from the oldest event still in Kafka, so no click is skipped.
@@ -45,9 +48,6 @@ spring:
         spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JacksonJsonDeserializer
         spring.json.value.default.type: com.example.shortener.recorder.ClickEvent
         spring.json.use.type.headers: false
-        # The redirect must not wait for Kafka: give up after 100 ms and drop the click (D-04).
-        # Kafka's default would block the request thread for up to 60 seconds.
-        max.block.ms: 100
 
 shortener:
   base-url: ${APP_BASE_URL:http://localhost:8080}
