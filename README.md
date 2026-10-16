@@ -1,14 +1,13 @@
 # URL Shortening Service
 
-A Java and Spring service that turns long URLs into short links, redirects visitors with low latency, and lets signed-in users manage their own links and see click statistics. It is designed to stay available through a data center outage and to absorb read spikes.
+A Java/Spring service that turns long URLs into short links, redirects quickly, and lets signed-in users deactivate their links and see click stats. Designed to survive a data center outage and read spikes. The reasons behind each choice are in [decisions.md](decisions.md).
 
 ## Assumptions and scope
 
-- Assumed scale: 1 million new links per day (about 12 per second) and 1,000 clicks per link, so about 1 billion redirects per day (about 11,600 per second on average, about 35,000 at peak). Both numbers are assumptions to confirm.
-- What matters most: link mappings are never lost, redirects stay fast during spikes, and the service survives the loss of one data center.
-- In scope: create a short link, redirect, list and deactivate my own links, click statistics per link, sign-in through an OIDC identity provider.
-- Out of scope (on purpose): custom aliases, link expiry, abuse detection, multi-region active-active writes beyond the design below.
-- Statistics may lag by a few seconds and are approximate.
+- 1M new links per day (about 12/s) and 1,000 clicks per link: about 11,600 redirects/s on average, 35,000 at peak. To confirm.
+- Most important: link mappings are never lost, redirects stay fast, one data center can fail.
+- Out of scope: custom aliases, expiry, abuse detection.
+- Stats may lag by a few seconds and are approximate.
 
 ## Architecture
 
@@ -19,195 +18,103 @@ Client -> Load balancer -> Spring Boot app (stateless, many instances)
                               '-> Kafka (click events, async) -> stats consumer -> Postgres
 ```
 
-- Redirect path: check the code format, check Redis, on a miss read Postgres and fill Redis (the URL, or a short-lived `NOT_FOUND` marker), answer with a 302 or 404, publish a click event without waiting.
-- Create path: validate the JWT, take the next ID from the Postgres sequence, scramble it, encode it in base 62, save the row, delete the Redis key for that code, return the short URL.
-- Availability: two data centers, each with the same setup, behind one load balancer. Each data center has its own ID range, so codes never collide.
-
-Key decisions are explained in [decisions.md](decisions.md).
-
-## What is implemented and what is design only
+- **Redirect:** check the code format, then Redis, then Postgres on a miss. Answer 302 or 404, and send a click event without waiting.
+- **Create:** check the JWT, take the next ID from a Postgres sequence, shuffle it, encode it in base 62, save, clear the Redis key.
 
 | Area | Status |
 |------|--------|
-| Create and redirect (Postgres, Redis cache-aside, Redis fallback) | Implemented, run end to end with Docker Compose |
-| Deactivate links | Implemented: `DELETE /api/links/{code}`, Postgres first, then the Redis key |
+| Create, redirect, Redis cache | Built |
+| Deactivate, click stats through Kafka | Built |
+| Login with Auth0 (PKCE), owner checks | Built |
+| Two app instances behind nginx | Built (one data center) |
 | List my links | Design only |
-| Click statistics through Kafka (D-04) | Implemented: each successful redirect sends a click event, and a consumer counts clicks per code per day in Postgres. `GET /api/links/{code}/stats` shows the total and the clicks per day |
-| Login and ownership (D-05) | Implemented: login through Auth0 (OIDC, authorization code + PKCE) in Swagger UI; the API checks the token and only the owner can deactivate a link or see its stats |
-| Two app instances behind a load balancer (nginx) | Implemented, in one data center: stopping one instance keeps every request working |
-| Second data center, Postgres replica, Kafka replication, global load balancer | Design only |
+| Second data center, Postgres replica, Kafka replication | Design only |
 
-## Tech stack
-
-- Language and version: Java 21
-- Framework: Spring Boot 4.1 (Web MVC, Validation, Data JPA with Flyway, Data Redis, Actuator). Spring Kafka, springdoc (OpenAPI spec and Swagger UI). Spring Security (OAuth2 resource server)
-- Database: PostgreSQL
-- Cache: Redis
-- Messaging: Kafka
-- Build tool: Maven (wrapper included, `./mvnw`)
-- Containers: Docker (multi-stage `Dockerfile`), Docker Compose, nginx as the load balancer
+**Stack:** Java 21, Spring Boot 4.1, PostgreSQL, Redis, Kafka, Docker Compose, nginx, Maven wrapper.
 
 ## How to run
 
-Prerequisites: Docker with Docker Compose. Java is only needed to run the app outside Docker (option B).
-
-### Option A: everything in Docker (two app instances behind nginx)
+Needs Docker with Docker Compose.
 
 ```bash
-# 1. Clone
-git clone <repo-url>
-cd <repo-folder>
+docker compose up -d --build     # Postgres, Redis, Kafka, app1, app2, nginx
+```
 
-# 2. Build the app image and start Postgres, Redis, Kafka, app1, app2 and nginx
-docker compose up -d --build
+After about 30 seconds, open http://localhost:8080/swagger-ui/index.html, click **Authorize** and sign in. Create a link, see its stats, deactivate it. Follow a short link with curl (Swagger can't show a redirect to another site):
 
-# 3. Wait until both apps have started (about 30 seconds), then open
-#    http://localhost:8080/swagger-ui/index.html, click "Authorize" and sign in.
-#    Create a link, see its stats and deactivate it from Swagger.
-
-# 4. Follow a short link (public, no login). Use curl or the address bar:
-#    Swagger's "Try it out" cannot show a redirect to another site (CORS).
+```bash
 curl -i http://localhost:8080/<code>
 ```
 
-The app settings for both instances (database, Redis, Kafka, Auth0, `SHORT_CODE_K`) are in `docker-compose.yml`. `SHORT_CODE_K` must be the same on every instance: with two different values, two instances could turn different IDs into the same short code.
+Login uses my Auth0 tenant. Test users can be shared on request; passwords are never in the repo. Settings are in `docker-compose.yml`. `SHORT_CODE_K` must be the same on every instance, or two instances could give two links the same code.
 
-### Option B: the app on your machine (for development)
-
-Needs Java 21 (Maven comes with the wrapper).
+**Failover demo** (nginx adds `X-Upstream-Addr` to show which instance answered):
 
 ```bash
-# Start only Postgres, Redis and Kafka
-docker compose up -d postgres redis kafka
-
-# Start the app. SHORT_CODE_K is the secret multiplier for the code shuffle
-# (odd, not a multiple of 31, below 62^7). The app refuses to start without it.
-# JWT_ISSUER and JWT_JWK_SET_URI point to the Auth0 tenant that issues the tokens.
-SHORT_CODE_K=<your-secret-k> \
-JWT_ISSUER=https://lamnguyenned.eu.auth0.com/ \
-JWT_JWK_SET_URI=https://lamnguyenned.eu.auth0.com/.well-known/jwks.json \
-./mvnw spring-boot:run
-```
-
-Option B uses port 8080 too, so stop option A's apps and nginx first (`docker compose stop app1 app2 nginx`).
-
-### See the load balancing and the failover (option A)
-
-nginx adds an `X-Upstream-Addr` header that shows which instance answered.
-
-```bash
-# Both instances take turns
-for i in 1 2 3 4; do curl -s -o /dev/null -D - http://localhost:8080/actuator/health | grep -i x-upstream; done
-
-# Stop one instance: every request still gets 200 from the other one
-docker compose stop app1
 for i in 1 2 3 4; do curl -s -o /dev/null -D - http://localhost:8080/actuator/health | grep -iE "^HTTP|x-upstream"; done
-
-# Kafka gives the stopped instance's click partitions to the other instance
+docker compose stop app1         # run the loop again: still all 200
 docker compose logs --since 2m app2 | grep -i "partitions assigned"
-
-# Start it again (wait about 30 seconds before testing)
 docker compose start app1
 ```
 
-Settings for login (defaults in `application.yml`):
+**Without Docker for the app:** `docker compose up -d postgres redis kafka`, then run `./mvnw spring-boot:run` with `SHORT_CODE_K`, `JWT_ISSUER` and `JWT_JWK_SET_URI` set (see `docker-compose.yml` for values).
 
-| Variable | Meaning | Default |
-|---|---|---|
-| `JWT_ISSUER` | who issues the tokens (`iss`) | placeholder, must be set |
-| `JWT_JWK_SET_URI` | where the issuer's public keys are | placeholder, must be set |
-| `JWT_AUDIENCE` | the API the token must be for (`aud`) | `url-shortener` |
-| `AUTH0_CLIENT_ID` | the Swagger UI login client (public, not a secret) | the client ID of my Auth0 application |
-
-Login uses my Auth0 tenant. Test users can be shared on request; passwords are never in the repository.
-
-The API can also be tried in the browser with Swagger UI at http://localhost:8080/swagger-ui/index.html (OpenAPI spec at `/v3/api-docs`). Set `SWAGGER_ENABLED=false` to turn both off where the API docs should not be public. The redirect itself is easiest to see with `curl -i`, because a browser follows it.
-
-Stop with `docker compose down` (add `-v` to remove data).
+Stop with `docker compose down` (`-v` also removes the data).
 
 ## API
 
-| Method | Path | Description | Success | Errors |
-|--------|------|-------------|---------|--------|
-| POST | /api/links | Create a short link for a long URL | 201 with code and short URL | 400 invalid URL, 401 |
-| GET | /{code} | Redirect to the long URL (public) | 302 with Location | 404 unknown or deactivated |
-| GET | /api/links | List my links (cursor pagination, design only) | 200 | 401 |
-| DELETE | /api/links/{code} | Deactivate my link (soft delete). 204 also if it was already inactive | 204 | 401, 403 not the owner, 404 "Code not found" |
-| GET | /api/links/{code}/stats | Click statistics for my link: total and clicks per day | 200 | 401, 403, 404 "Code not found" (also for a deactivated link) |
+| Method | Path | Success | Errors |
+|--------|------|---------|--------|
+| POST | /api/links | 201 `{code, shortUrl}` | 400 bad URL, 401 |
+| GET | /{code} (public) | 302 + Location | 404 unknown or deactivated |
+| DELETE | /api/links/{code} | 204 (also if already inactive) | 401, 403, 404 |
+| GET | /api/links/{code}/stats | 200 total + per day | 401, 403, 404 |
+| GET | /api/links | design only | |
 
-Authentication (D-05): every `/api` call needs a Bearer access token (JWT) from Auth0; without a valid token the answer is 401. The `/{code}` redirect needs no token. A link belongs to the user who created it (the token's `sub`); someone else gets 403 on deactivate and stats. Listing is design only.
+`/api` needs a Bearer token from Auth0. A link belongs to the token's `sub`.
 
-## Data model
-
-- `links` (implemented, `V1__create_links.sql`): id (from the counter), code (unique index), long_url, owner_sub (the token's `sub`), active, created_at.
-- `click_stats` (implemented, `V2__create_click_stats.sql`): code, day, num_clicks, with primary key (code, day). One row per link per day; the day is the UTC date of the event's `clickedAt`.
-- `processed_events` (implemented, `V2`): event_id (primary key), processed_at. Used to ignore duplicate click events; an hourly job deletes rows older than 1 day.
+**Tables:** `links` (id, code, long_url, owner_sub, active, created_at), `click_stats` (code, day, num_clicks), `processed_events` (event_id, processed_at).
 
 ## Reliability
 
-- Delivery guarantee: at-least-once from Kafka, with an idempotent consumer.
-- Duplicate handling: each click event has a unique event ID. The consumer inserts it (unique constraint) and updates the counter in one transaction, so a redelivered event is ignored. Event IDs are kept for 1 day.
-- Retries: if counting fails (for example Postgres is down), the consumer retries the same event every second until it succeeds, so no click is lost. Messages that can never succeed (not valid JSON, or bad data) are logged and skipped, so they do not block their partition.
-- If Redis is down: reads fall back to Postgres, slower under load. Redis calls time out after 100 ms, and Redis is not part of the health check, so a cache outage does not remove instances from the load balancer.
-- If Kafka is down: redirects still work. The producer waits at most about 100 ms, then drops the click, so some clicks are not counted (measured: redirects took about 107 to 137 ms while Kafka was stopped).
-- If Postgres is down for the consumer: clicks wait in Kafka and are counted when Postgres is back (measured: 4 clicks during a short outage were all counted afterwards).
-- If one app instance stops: nginx retries the request on the other instance, so the caller still gets an answer (measured: all requests 200, the first one tried both instances). Kafka moves the stopped instance's click partitions to the other instance.
-- If the identity provider is down: new sign-ins fail, existing tokens work until they expire. Redirects are unaffected.
-- Link mappings: stored in Postgres with a replica and backups. Redis is only a performance layer.
-- Deactivation: update Postgres first, then delete the Redis entry (measured: the next redirect returns 404 at once). This makes it unlikely that an old value is put back; if it happens, the cache time limit ends it within about 5 minutes.
+- **Redis down:** redirects fall back to Postgres. Redis hanging: about 210 ms (two 100 ms timeouts).
+- **Kafka down:** redirects still work, the click is dropped after 100 ms.
+- **Postgres down:** cached links still redirect; clicks wait in Kafka and are counted afterwards.
+- **One instance down:** nginx retries on the other one; Kafka moves its partitions over.
+- **Duplicates:** each click has an event ID, saved in the same transaction as the count, so a redelivered event is counted once.
+- **Deactivate:** Postgres first, then the Redis key, so the next redirect is a 404.
+
+All of these were tried by hand with Docker Compose.
 
 ## Security
 
-- Authentication vs authorization: the token proves who the caller is (401 if invalid). Ownership is checked on every link operation (403 for someone else's link).
-- Token validation: signature (provider's public keys), exp, iss, aud, and a pinned algorithm. Never accept `alg: none`.
-- Input: only http and https URLs are accepted when creating a link.
-- In transit: TLS at the load balancer. At rest: encrypted database volumes.
-- Secrets: read from environment variables, never committed to Git.
+- Tokens: signature (Auth0's public keys), RS256 only, `exp`, `iss`, `aud`. 401 if invalid, 403 for someone else's link.
+- Only http/https URLs with a host, max 2,048 characters.
+- Secrets from environment variables. TLS at the load balancer and encrypted volumes in production.
 
 ## Testing
 
 ```bash
-./mvnw test
+./mvnw test      # Docker must be running (Testcontainers)
 ```
 
-Docker must be running: the integration tests start Postgres and Redis containers with Testcontainers.
-
-What exists:
-- Unit tests for the code generator (base 62, shuffle, boundaries, uniqueness, K validation, code format).
-- Unit and web-layer tests for the cache, redirect, create, deactivate, stats and configuration (mocked Postgres and Redis).
-- `contextLoads` against real Postgres and Redis containers: proves Flyway and Hibernate `validate` agree.
-- Click statistics: the Kafka sender with a mocked Kafka (right key, never fails a redirect); the counting and the cleanup against a real Postgres (same-day totals, redelivered events counted once, old event IDs deleted), and the stats query against a real Postgres (total, days in order, deactivated links hidden).
-- Login and ownership: tokens signed by a test key are accepted or rejected (expired, wrong issuer, wrong audience, wrong algorithm, unsigned, unknown key); the audience check on its own; 401 without a token, 403 for someone else's link, 404 for an unknown code.
-- Manual end-to-end runs with Docker Compose: Redis stopped and Redis hanging; Kafka stopped; Postgres stopped while clicks were being counted; login through Swagger UI with Auth0.
-
-Not covered yet: automated end-to-end tests with a real Kafka, and a Postgres outage longer than the 30-second connection wait (where the consumer's retry takes over). A CI pipeline (build and tests on every push) is a next step.
+- 78 tests, one per behaviour: unit and web tests, plus real Postgres and Redis for counting, cleanup, stats and `contextLoads`, and real signed tokens for the JWT checks.
+- CI: GitHub Actions runs all tests on every pull request to `main`.
+- Not covered: an automated test with a real Kafka.
 
 ## Known limitations and next steps
 
-- Statistics are approximate and lag by a few seconds. Exact counts would need the outbox pattern.
-- The stats consumer runs inside the app instances. At larger scale it could be its own deployment.
-- No custom aliases, expiry or abuse detection yet.
-- Rate limiting on link creation is a next step.
-- Multi-region active-active writes would need more than disjoint ID ranges.
+- No listing yet. It's the next thing to build.
+- Clicks are lost while Kafka is down; an outbox would fix it.
+- Tokens can't be revoked before they expire.
+- Next: listing, a Kafka end-to-end test, rate limiting, the second data center.
 
 ## Use of AI tools
 
-I used Claude (Claude Code) as a pair programmer, in two phases.
+I used Claude Code as a pair programmer, with the VibeWise plugin in learning mode: at every build checkpoint it asked me about the concepts and my approach before any code was written. For example, before I wrote the Kafka consumer: "saving the event ID and adding to the count are two statements. What goes wrong if the first succeeds and the second fails?" (the click would be skipped on retry and lost, so both go in one transaction).
 
-**Phase 1: first version.** Claude wrote most of the Java/Spring code in small steps from my designs, and I reviewed each step. I wrote the short code generator and its tests myself. I removed Claude's block allocator because I could not explain it well enough to defend it.
+**First version.** Claude wrote most of the Spring code from my designs, step by step, and I reviewed it. I wrote the short code generator and its tests, the audience validator, the ownership checks, the OpenAPI config, the Dockerfile and nginx. I removed Claude's ID block allocator because I couldn't explain its concurrency.
 
-**Phase 2: rewrite.** I did not want code in the repository that I had only reviewed. So I rewrote every component from scratch, each on its own branch: the Redis cache, the redirect, link creation with URL validation, and the Kafka click pipeline (sender, consumer, cleanup). Before each one, I explained my approach and Claude asked questions about it: which value is the Kafka key, why the consumer needs one transaction, what happens on a retry. Claude then set up empty classes and test outlines, and reviewed what I wrote. Those reviews caught real bugs, for example a missing `@Component`, a checked exception that Mockito rejects, and a test that did not check the Kafka key. I also cut the test suite from 99 to 77 tests, keeping one test per behaviour.
+**Rewrite.** I didn't want core logic I had only reviewed, so I rewrote the Redis cache, the redirect, link creation and the Kafka pipeline from scratch, each on its own branch. Claude set up empty classes and reviewed my code. The reviews caught real bugs, like a missing `@Component` and a test that didn't check the Kafka key.
 
-**What Claude wrote and I reviewed:** setup code (security and JWT configuration, Flyway migrations, Kafka topic and error handler settings, `application.yml`), first drafts of this README and `decisions.md`, and fact checks (Spring Boot 4, Postgres 18, Testcontainers, Auth0).
-
-**What I decided:**
-- the shuffle's threat model;
-- feature packages;
-- 404 for both unknown and deactivated links;
-- an idempotent 204 on deactivate;
-- counting clicks only on a 302;
-- validating URLs in the service, not in the controller;
-- Auth0 for login;
-- two instances behind nginx, with the replicas left as design only.
-
-I can explain every design decision and every line of the code.
+**Still Claude's (reviewed):** setup code (security config, migrations, Kafka settings), some tests (JWT decoder, startup config, stats query), and the first drafts of the docs. Reviewing isn't perfect: my manual Kafka outage test found that Claude had put `max.block.ms` on the consumer instead of the producer, so redirects could hang for 60 seconds.
