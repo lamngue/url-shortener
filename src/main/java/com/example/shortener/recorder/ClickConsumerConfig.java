@@ -12,10 +12,8 @@ import org.springframework.util.backoff.FixedBackOff;
 @EnableScheduling
 public class ClickConsumerConfig {
 
-    // If counting fails (for example Postgres is down), retry the same event every second for as
-    // long as it takes, instead of Spring's default of a few tries and then skipping it, which
-    // would silently lose clicks. Events that can never succeed are skipped and logged:
-    // broken messages (handled by ErrorHandlingDeserializer, never retried) and bad data.
+    // Retry a failed event every second until it succeeds (e.g. Postgres down), instead of
+    // Spring's default of a few tries and then skipping it. Bad data is skipped, not retried.
     @Bean
     DefaultErrorHandler clickErrorHandler() {
         DefaultErrorHandler handler = new DefaultErrorHandler(new FixedBackOff(1_000L, FixedBackOff.UNLIMITED_ATTEMPTS));
